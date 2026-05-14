@@ -15,6 +15,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const PORT     = process.env.PORT || 8080;
 const BASE_URL = process.env.BASE_URL;
+const ML_URL   = process.env.ML_SERVICE_URL || null;  // z.B. https://ml-service.up.railway.app
 const DATA_DIR = path.join(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
 
@@ -294,6 +295,40 @@ async function autoTune(name) {
   }
 }
 
+// ── ML-Service Integration ────────────────────────────
+let mlStatus = {};  // { strategie: { trainiert, n_trades, accuracy } }
+
+async function mlPredict(name, side, equity, rrr) {
+  if (!ML_URL) return { empfehlung: 'trade', grund: 'ML nicht konfiguriert', trainiert: false };
+  try {
+    const trades = tradeHistory[name] || [];
+    const f5  = trades.slice(-5).filter(t => t.pnl !== 0);
+    const f15 = trades.slice(-15).filter(t => t.pnl !== 0);
+    const res = await axios.post(`${ML_URL}/predict`, {
+      strategie:  name,
+      side,
+      equity,
+      rrr:        rrr || 2.0,
+      recentWR5:  f5.length  ? parseFloat(((f5.filter(t=>t.pnl>0).length/f5.length)*100).toFixed(1))  : null,
+      recentWR15: f15.length ? parseFloat(((f15.filter(t=>t.pnl>0).length/f15.length)*100).toFixed(1)) : null,
+      konsek:     berechneKonsek(name),
+    }, { timeout: 3000 });
+    return res.data;
+  } catch (err) {
+    addLog('warn', `⚠️ ML-Service nicht erreichbar: ${err.message} — Trade wird trotzdem ausgeführt`);
+    return { empfehlung: 'trade', grund: 'ML-Fehler (fail-safe)', trainiert: false };
+  }
+}
+
+async function aktualisiereMlStatus() {
+  if (!ML_URL) return;
+  try {
+    const res = await axios.get(`${ML_URL}/status`, { timeout: 5000 });
+    mlStatus = res.data;
+    broadcast('ml_status', mlStatus);
+  } catch {}
+}
+
 // ── Feature Logger (für späteres ML-Training) ────────
 const FEATURES_PATH = path.join(DATA_DIR, 'features.jsonl');
 
@@ -407,6 +442,16 @@ async function handleWebhook(req, res, name) {
       }
     } catch {}
 
+    // ── ML-Filter ─────────────────────────────────────
+    const rrr = slF && tpF ? parseFloat((Math.abs(tpF - slF) / (slDist || 1)).toFixed(2)) : 2.0;
+    const ml  = await mlPredict(name, side, equity, rrr);
+    addLog('info', `🤖 [${name}] ML: ${ml.empfehlung} (${ml.konfidenz ? (ml.konfidenz*100).toFixed(0)+'%' : 'kein Modell'}) — ${ml.grund}`);
+    if (ml.empfehlung === 'skip') {
+      logFeature(name, side, equity, rrr, false, `ML: ${ml.grund}`);
+      broadcast('ml_skip', { name, side, konfidenz: ml.konfidenz, grund: ml.grund });
+      return res.json({ status: 'übersprungen', grund: ml.grund, ml });
+    }
+
     await closePositions(name, 'GOLD');
 
     const riskCapital = equity * (s.riskPct / 100);
@@ -417,9 +462,8 @@ async function handleWebhook(req, res, name) {
     addLog('info', `📤 [${name}] Order: ${JSON.stringify(order)}`);
     await placeOrder(name, order);
 
-    const rrrAkt = slF && tpF ? parseFloat((Math.abs(tpF - slF) / Math.abs(slF - slF || 1)).toFixed(2)) : null;
-    logFeature(name, side, equity, rrrAkt, true);
-    await tg(`${side === 'BUY' ? '🟢' : '🔴'} <b>${side === 'BUY' ? 'LONG' : 'SHORT'}</b> — <b>${name}</b>\nSize: ${size} | SL: ${slF} | TP: ${tpF}`);
+    logFeature(name, side, equity, rrr, true);
+    await tg(`${side === 'BUY' ? '🟢' : '🔴'} <b>${side === 'BUY' ? 'LONG' : 'SHORT'}</b> — <b>${name}</b>\nSize: ${size} | SL: ${slF} | TP: ${tpF}${ml.trainiert ? ` | ML: ${(ml.konfidenz*100).toFixed(0)}%` : ''}`);
     broadcast('trade', { name, side, size, sl: slF, tp: tpF, equity });
     res.json({ status: 'ok', name, size, sl: slF, tp: tpF });
 
@@ -506,6 +550,22 @@ app.post('/api/smart/reset', async (req, res) => {
   await tg(`🔄 [Smart] Regime manuell zurückgesetzt: ${alt} → AKTIV`);
   broadcast('regime', SMART);
   res.json({ status: 'ok', alt, neu: 'AKTIV' });
+});
+
+// ── ML API ────────────────────────────────────────────
+app.get('/api/ml-status', async (req, res) => {
+  await aktualisiereMlStatus();
+  res.json({ url: ML_URL, status: mlStatus });
+});
+
+app.post('/api/ml-train', async (req, res) => {
+  if (!ML_URL) return res.status(503).json({ error: 'ML_SERVICE_URL nicht konfiguriert' });
+  try {
+    const { strategie } = req.body;
+    const r = await axios.post(`${ML_URL}/train`, { strategie: strategie || null }, { timeout: 60000 });
+    await aktualisiereMlStatus();
+    res.json(r.data);
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 // ── AutoTune API ──────────────────────────────────────

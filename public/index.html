@@ -104,6 +104,7 @@ tr:hover td{background:#0f0f1a}
   <div class="nav-tab" onclick="showPage('strategien',this)">Strategien</div>
   <div class="nav-tab" onclick="showPage('trades',this)">Trades</div>
   <div class="nav-tab" onclick="showPage('autotune',this)">⚡ AutoTune</div>
+  <div class="nav-tab" onclick="showPage('ml',this)">🤖 ML</div>
   <div class="nav-tab" onclick="showPage('logs',this)">Live-Logs</div>
 </nav>
 
@@ -138,6 +139,22 @@ tr:hover td{background:#0f0f1a}
   <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden">
     <table><thead><tr><th>Datum</th><th>Strategie</th><th>Side</th><th>P&L</th><th>Equity</th></tr></thead>
     <tbody id="trade-table"></tbody></table>
+  </div>
+</div>
+
+<!-- ML -->
+<div id="page-ml" class="page">
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+    <span style="font-size:13px;color:var(--muted)">Machine Learning — Modelle trainieren und Predictions einsehen</span>
+    <button class="btn btn-gold btn-sm" onclick="mlTrainAll()" style="margin-left:auto">🔄 Alle trainieren</button>
+  </div>
+  <div class="grid grid-4" id="ml-cards"></div>
+  <div style="margin-top:24px">
+    <div class="section-title">Letzte ML-Entscheidungen</div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden">
+      <table><thead><tr><th>Zeit</th><th>Strategie</th><th>Side</th><th>Entscheidung</th><th>Konfidenz</th><th>Grund</th></tr></thead>
+      <tbody id="ml-table"></tbody></table>
+    </div>
   </div>
 </div>
 
@@ -197,7 +214,7 @@ const STRAT_NAMES = ['mittel','aggressiv','smart','konservativ','optimiert','tes
 const STRAT_COLORS = { mittel:'#f59e0b',aggressiv:'#ef4444',smart:'#8b5cf6',konservativ:'#22c55e',optimiert:'#3b82f6',test:'#ec4899',adaptive:'#06b6d4',steady:'#a3e635' };
 
 let BASE = '', ws = null, settings = {}, performance = {}, equityData = {}, allTrades = {}, charts = {}, currentModalStrat = null;
-let tuningData = {}, settingsOriginal = {};
+let tuningData = {}, settingsOriginal = {}, mlData = {}, mlLog = [];
 
 function showPage(id, el) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
@@ -206,6 +223,7 @@ function showPage(id, el) {
   el.classList.add('active');
   if (id === 'trades') renderTrades();
   if (id === 'autotune') renderTuning();
+  if (id === 'ml') renderML();
 }
 
 function setConn(ok, msg) {
@@ -247,6 +265,11 @@ function connectWS() {
     if (type === 'log') appendLog(d);
     if (type === 'settings') { settings[d.name] = d.settings; renderStratCards(); }
     if (type === 'regime') updateRegimeBadge(d);
+    if (type === 'ml_status') { mlData = d; }
+    if (type === 'ml_skip') {
+      mlLog.unshift({ ts: new Date().toISOString(), name: d.name, side: d.side, entscheidung: 'skip', konfidenz: d.konfidenz, grund: d.grund });
+      if (mlLog.length > 100) mlLog.pop();
+    }
     if (type === 'tuning') {
       if (!tuningData[d.name]) tuningData[d.name] = [];
       tuningData[d.name].unshift(d);
@@ -517,6 +540,62 @@ function appendLog(entry) {
 function clearLogs() { document.getElementById('log-wrap').innerHTML = ''; }
 
 async function refreshAll() { await connect(); }
+
+// ── ML Tab ────────────────────────────────────────────
+async function renderML() {
+  try {
+    const res = await fetch(`${BASE}/api/ml-status`);
+    const data = await res.json();
+    mlData = data.status || {};
+  } catch {}
+
+  const cards = document.getElementById('ml-cards');
+  cards.innerHTML = STRAT_NAMES.map(n => {
+    const m = mlData[n] || {};
+    const trainiert = m.trainiert;
+    const bereit = m.bereit;
+    const trades = m.n_trades || 0;
+    const acc = m.meta?.accuracy_cv;
+    const farbe = trainiert ? '#22c55e' : bereit ? '#f59e0b' : '#ef4444';
+    const status = trainiert ? '✅ Trainiert' : bereit ? '⏳ Bereit' : `❌ ${trades}/30 Trades`;
+    return `<div class="card">
+      <h3>${n}</h3>
+      <div style="font-size:20px;font-weight:700;color:${farbe}">${status}</div>
+      ${acc ? `<div style="font-size:12px;color:var(--muted);margin-top:6px">Accuracy: <b style="color:var(--text)">${(acc*100).toFixed(1)}%</b></div>` : ''}
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">${trades} Trades gesammelt</div>
+      ${m.meta?.trainiert_am ? `<div style="font-size:10px;color:var(--muted);margin-top:4px">Trainiert: ${new Date(m.meta.trainiert_am).toLocaleDateString('de-DE')}</div>` : ''}
+      ${bereit ? `<button class="btn btn-dark btn-sm" style="margin-top:10px;width:100%" onclick="mlTrain('${n}')">🔄 Trainieren</button>` : ''}
+    </div>`;
+  }).join('');
+
+  // ML-Log Tabelle
+  document.getElementById('ml-table').innerHTML = mlLog.slice(0,50).map(r => `
+    <tr>
+      <td>${new Date(r.ts).toLocaleTimeString('de-DE')}</td>
+      <td><span style="color:${STRAT_COLORS[r.name]}">${r.name}</span></td>
+      <td><span class="badge ${r.side==='BUY'?'buy':'sell'}">${r.side||'–'}</span></td>
+      <td style="color:${r.entscheidung==='trade'?'#22c55e':'#ef4444'};font-weight:700">${r.entscheidung==='trade'?'✅ TRADE':'❌ SKIP'}</td>
+      <td>${r.konfidenz!=null ? (r.konfidenz*100).toFixed(0)+'%' : '–'}</td>
+      <td style="font-size:11px;color:var(--muted)">${r.grund||'–'}</td>
+    </tr>`).join('');
+}
+
+async function mlTrain(strategie) {
+  try {
+    const r = await fetch(`${BASE}/api/ml-train`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ strategie }) });
+    const d = await r.json();
+    alert(`Training: ${JSON.stringify(d[strategie] || d, null, 2)}`);
+    renderML();
+  } catch(e) { alert('Fehler: ' + e.message); }
+}
+
+async function mlTrainAll() {
+  try {
+    await fetch(`${BASE}/api/ml-train`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({}) });
+    alert('Training gestartet für alle Strategien!');
+    setTimeout(renderML, 3000);
+  } catch(e) { alert('Fehler: ' + e.message); }
+}
 
 // ── Init ──────────────────────────────────────────────
 window.onload = () => {
