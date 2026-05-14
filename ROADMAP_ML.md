@@ -1,146 +1,79 @@
-# Master-Bot — ML Roadmap (Stufe 3 & 4)
+# Master Bot — ML Roadmap (aktueller Stand Mai 2026)
 
-## Was bereits läuft (Stufe 1 & 2)
+## Was bereits implementiert ist
 
-- **Regime-Filter** (Smart): AKTIV / VORSICHTIG / PAUSE basierend auf Rolling Win-Rate
-- **AutoTune**: Risk-% wird automatisch halbiert bei schlechter WR oder Verlustserien
-- **Stunden-Tracking**: schlechte Handelsstunden werden erkannt und blockiert
-- **Tages-Limits**: Tagesziel-Stop, Tagesverlust-Stop, Max. Drawdown
+### Self-Learning System (server.js)
+- **PnL Feedback Loop** — jeder ausgeführte Trade bekommt sein Ergebnis (Gewinn/Verlust) zurückgeschrieben in features.jsonl
+- **Feature-Logging (13 Features):** hour, weekday, sessionLondon, sessionOverlap, side, wr5, wr15, konsek, rrr, slDistPct, rewardPct, spread, drawdownPct
+- **Konfidenz-basiertes Sizing:** skip / 0.5× / 1.0× / 1.5× je nach ML-Wahrscheinlichkeit
+- **AutoTune:** Risk-Reduktion bei schlechter Win-Rate oder Verlustserien
+- **Stunden-Persistenz:** stundenStats überleben Server-Neustarts
+
+### ML-Service (ml-service/main.py)
+- **XGBoost Classifier** (kein Random Forest, kein PyTorch — XGBoost ist optimal für tabellarische Handelsdaten)
+- **MIN_TRADES = 60** pro Strategie bevor Modell aktiv wird
+- **Konfidenz-Schwelle = 0.62** (erhöht von 0.58)
+- **3-stufiges Sizing:** < 0.54 → skip | 0.54–0.62 → 0.5× | 0.62–0.72 → 1.0× | > 0.72 → 1.5×
+- **Klassen-Balance** automatisch per scale_pos_weight
+- **Wöchentliches Auto-Retrain** montags 03:00
 
 ---
 
-## Stufe 3 — Machine Learning (Python-Microservice)
+## Was noch fehlt (priorisiert)
 
-### Architektur
-```
-TradingView Signal
-      ↓
-master-bot (Node.js) ──→ ML-Service (Python/FastAPI) ──→ Entscheidung
-      ↓                         ↑
-  Trade ausführen          Modell + Features
-```
+### Nächste Schritte (V1 abschließen)
+1. **Trades sammeln** — 60+ pro Strategie bevor ML-Training sinnvoll ist
+2. **ML_SERVICE_URL** in Railway master-bot eintragen (URL des ml-service)
+3. **PostgreSQL** einführen statt JSON-Dateien (skaliert nicht über ~500 Trades)
 
-### Was das Modell lernt
-Aus jedem abgeschlossenen Trade wird ein Feature-Vektor gebaut:
+### V2 — Market Intelligence
+4. **Market Mode Detection** — Bull / Bear / Sideways / High Volatility / Panic automatisch erkennen
+5. **Backtesting Engine** — historische OHLCV-Daten von Capital.com, Walk-Forward Testing
+6. **Dynamischer Confidence Threshold** — je nach Marktmodus anpassen (nicht statisch 0.62)
+7. **Strategie Scoring** — Win Rate, Profit Factor, Drawdown pro Strategie automatisch bewerten
+
+### V3 — Memory & Learning
+8. **Memory System** — welche Marktbedingungen führen zu Gewinnen? (nicht nur einzelne Trades)
+9. **Strategy Weight Adjustment** — schlechte Strategien automatisch depriorisieren
+10. **Meta-Learning** — erkennt wann Retraining nötig ist (Markt hat sich verändert)
+
+### V4 — Multi-Agent
+11. **Spezialisierte Agenten** — Trend, Risk, News, Macro, Gold, Stock, Crypto
+12. **Signal Aggregation** — Master aggregiert alle Agenten-Signale
+13. **News/Sentiment Integration** — Makro-Events, Earnings, CPI in Entscheidung einbeziehen
+14. **Eigene Signalgenerierung** — kein TradingView mehr nötig (Capital.com WebSocket → eigene Indikatoren)
+
+---
+
+## Feature-Vektor (aktuell)
 
 | Feature | Beschreibung |
-|---------|-------------|
-| `hour` | Stunde des Signals (0–23) |
-| `weekday` | Wochentag (0=Mo, 4=Fr) |
-| `side` | BUY=1, SELL=0 |
-| `spread` | Bid-Ask Spread zum Zeitpunkt |
-| `recent_wr_5` | Win Rate letzte 5 Trades |
-| `recent_wr_15` | Win Rate letzte 15 Trades |
-| `konsek_verluste` | Aktuelle Verlustserie |
-| `equity_change_24h` | Equity-Veränderung letzten 24h |
-| `drawdown_pct` | Aktueller Drawdown vom Start |
-| `rrr` | Risk-Reward-Ratio des Signals |
+|---|---|
+| hour | Stunde des Signals (0–23) |
+| weekday | Wochentag (0=Mo, 6=So) |
+| sessionLondon | 1 wenn 08:00–12:00 |
+| sessionOverlap | 1 wenn 13:00–17:00 (London/NY Overlap) |
+| side_buy | BUY=1, SELL=0 |
+| wr5 | Win Rate letzte 5 Trades |
+| wr15 | Win Rate letzte 15 Trades |
+| konsek | Aktuelle Verlustserie (max 10) |
+| rrr | Risk-Reward-Ratio (korrekt: entry→sl / entry→tp) |
+| slDistPct | SL-Abstand vom Entry in % |
+| rewardPct | TP-Abstand vom Entry in % |
+| spread | Bid-Ask Spread zum Zeitpunkt |
+| drawdownPct | Aktueller Drawdown vom Start-Equity |
 
-**Target**: `gewinn` (1) oder `verlust` (0)
-
-### Modell
-- **Phase 1**: Random Forest (scikit-learn) — schnell, erklärbar
-- **Phase 2**: XGBoost — bessere Performance bei wenig Daten
-- **Phase 3**: LSTM (PyTorch) — lernt zeitliche Muster
-
-### Training
-- Mindestens 50 Trades pro Strategie bevor Modell greift
-- Wöchentliches Retrain mit allen historischen Trades
-- Modell speichert sich als `.pkl` Datei
-
-### Integration in master-bot
-```js
-// Vor jedem Trade: ML-Service anfragen
-const mlRes = await axios.post('http://ml-service:5000/predict', { features });
-if (mlRes.data.wahrscheinlichkeit < 0.55) {
-  return res.json({ status: 'übersprungen', grund: 'ML: zu geringes Signal' });
-}
-```
-
-### Dateien die vorbereitet werden (jetzt schon sammeln)
-- `data/trades.json` — wird bereits gespeichert ✅
-- `data/equity.json` — wird bereits gespeichert ✅
-- `data/tuning.json` — wird bereits gespeichert ✅
-- `data/features.jsonl` — NEU: Feature-Log für jedes Signal (auch abgelehnte!)
+**Label:** 1 = Gewinn, 0 = Verlust
 
 ---
 
-## Stufe 4 — Vollautonomes System
-
-### Eigene Signalgenerierung (kein TradingView mehr nötig)
-
-```
-Capital.com Marktdaten (WebSocket)
-      ↓
-Feature Engineering (OHLCV + Indikatoren)
-      ↓
-ML-Modell entscheidet: Einsteigen? In welche Richtung?
-      ↓
-master-bot führt aus
-```
-
-**Indikatoren die berechnet werden:**
-- RSI (14), EMA (9, 21, 50), MACD, Bollinger Bands
-- ATR für dynamisches SL/TP
-- Volumen-Anomalien
-- Tageszeit-gewichtete Signalstärke
-
-### Backtesting-Engine
-- Historische OHLCV-Daten laden (Capital.com `/prices` Endpoint)
-- Strategie simulieren ohne echtes Kapital
-- Sharpe Ratio, Max. Drawdown, Win Rate auswerten
-- Nur wenn Backtest > Schwellenwert → Live schalten
-
-### A/B-Testing
-- Neue Strategievariante läuft mit 10% des Kapitals parallel
-- Nach 30 Trades: automatischer Vergleich
-- Bessere Variante gewinnt, schlechtere wird gestoppt
-
----
-
-## Datenpunkte die wir JETZT schon sammeln sollten
-
-```js
-// In server.js ergänzen: Feature-Log bei jedem Signal
-function logFeature(name, signal, equity, context) {
-  const feature = {
-    ts: Date.now(),
-    strategie: name,
-    side: signal.side,
-    hour: new Date().getHours(),
-    weekday: new Date().getDay(),
-    equity,
-    recentWR5:  berechneWR(name, 5),
-    recentWR15: berechneWR(name, 15),
-    konsek:     berechneKonsek(name),
-    rrr:        context.rrr,
-    ausgefuehrt: true  // false wenn blockiert
-  };
-  fs.appendFileSync(path.join(DATA_DIR, 'features.jsonl'), JSON.stringify(feature) + '\n');
-}
-```
-
-Je mehr Trades gesammelt werden, desto besser wird das Modell.
-**Ziel: 200+ Trades pro Strategie** bevor ML sinnvoll ist.
-
----
-
-## Tech Stack für Stufe 3+4
+## Tech Stack (final)
 
 | Komponente | Technologie |
-|-----------|-------------|
-| ML-Service | Python 3.11 + FastAPI |
-| Modell | scikit-learn → XGBoost → PyTorch |
-| Daten-Pipeline | pandas + numpy |
+|---|---|
+| Backend | Node.js + Express + WebSocket |
+| ML-Service | Python + FastAPI |
+| Modell | XGBoost (fest — kein Upgrade auf PyTorch geplant) |
+| Daten | features.jsonl → PostgreSQL (ab V2) |
 | Scheduling | APScheduler (wöchentliches Retrain) |
-| Deployment | Eigener Railway Service |
-| Kommunikation | REST API zwischen Node.js und Python |
-
----
-
-## Nächste konkrete Schritte
-
-1. **Jetzt**: Feature-Logging in server.js einbauen (sammelt Daten für später)
-2. **Nach 50+ Trades**: Python ML-Service bauen (FastAPI + Random Forest)
-3. **Nach 200+ Trades**: XGBoost mit vollständigem Feature-Set
-4. **Optional**: Capital.com WebSocket für eigene Marktdaten anbinden
+| Deployment | Railway (GitHub Auto-Deploy) |

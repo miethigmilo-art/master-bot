@@ -19,6 +19,9 @@ const ML_URL   = process.env.ML_SERVICE_URL || null;  // z.B. https://ml-service
 const DATA_DIR = path.join(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
 
+// ── Backtesting Engine ────────────────────────────────
+const BT = require('./backtest');
+
 // ── Settings ──────────────────────────────────────────
 const SETTINGS_PATH = path.join(__dirname, 'settings.json');
 let SETTINGS = JSON.parse(fs.readFileSync(SETTINGS_PATH, 'utf8'));
@@ -349,8 +352,9 @@ async function aktualisiereMlStatus() {
   } catch {}
 }
 
-// ── Feature Logger (für späteres ML-Training) ────────
+// ── Feature Logger + Signal Logger ───────────────────
 const FEATURES_PATH = path.join(DATA_DIR, 'features.jsonl');
+const SIGNALS_PATH  = path.join(DATA_DIR, 'signals.jsonl');  // Für Backtesting-Replay
 
 function berechneWR(name, n) {
   const t = (tradeHistory[name] || []).slice(-n);
@@ -531,6 +535,9 @@ async function handleWebhook(req, res, name) {
     addLog('info', `📨 Signal [${name}]: ${JSON.stringify(req.body)}`);
     const { side, sl, tp } = req.body;
     if (!side || !sl || !tp) return res.status(400).json({ error: 'Fehlende Felder (side/sl/tp)' });
+
+    // Signal für späteren Backtest-Replay loggen
+    try { fs.appendFileSync(SIGNALS_PATH, JSON.stringify({ ts: Date.now(), strategie: name, side, sl, tp }) + '\n'); } catch {}
 
     await ensureAuth(name);
     const equity = await getEquity(name);
@@ -762,135 +769,69 @@ app.post('/api/tuning/reset/:name', (req, res) => {
   res.json({ status: 'ok', riskPct: SETTINGS[name].riskPct });
 });
 
-// ── Market Mode API ────────────────────────────────────────────────────────────
-app.get('/api/market-mode', (req, res) => res.json({ ...marketMode, config: MARKET_MODES }));
+// ── Backtesting API ───────────────────────────────────────────────────────────
 
-app.post('/api/market-mode/refresh', async (req, res) => {
-  await analysiereMarktmodus();
-  res.json(marketMode);
-});
-
-// ── Health ─────────────────────────────────────────────────────────────────────
-app.get('/health', (req, res) => res.json({ status: 'ok', strategies: Object.keys(KONTEN).length, marketMode: marketMode.modus }));
-
-// ── Server starten ────────────────────────────────────────────────────────
-server.listen(PORT, () => {
-  console.log(`\u{1F680} Master-Bot läuft auf Port ${PORT}`);
-  setInterval(aktualisiereMlStatus,    5 * 60 * 1000);   // ML-Status alle 5 Min
-  setInterval(analysiereMarktmodus,   30 * 60 * 1000);   // Market Mode alle 30 Min
-  setTimeout(analysiereMarktmodus,          5 * 1000);   // Erster Lauf nach 5s (Auth braucht Zeit)
-});
-    res.status(500).json({ error: err.message, detail });
-  } finally {
-    aktiveTrades[name] = false;
-    letzterTrade[name] = Date.now();
+// Analyse aller Strategien aus vorhandener Trade-History
+app.get('/api/backtest/analyze', (req, res) => {
+  const result = {};
+  for (const name of Object.keys(KONTEN)) {
+    const trades = tradeHistory[name] || [];
+    const metriken = BT.berechneMetriken(trades);
+    result[name] = {
+      metriken,
+      score:       BT.berechneStrategieScore(metriken),
+      walkForward: BT.walkForwardTest(trades, Math.min(4, Math.floor(trades.length / 5))),
+      stunden:     BT.analyseNachStunde(trades),
+      wochentage:  BT.analyseNachWochentag(trades),
+      sides:       BT.analyseNachSide(trades),
+    };
   }
-}
-
-// ── Webhook Routen ─────────────────────────────────────────────────
-['mittel','aggressiv','smart','konservativ','optimiert','test','adaptive','steady'].forEach(n => {
-  app.post(`/webhook/${n}`, (req, res) => handleWebhook(req, res, n));
+  res.json({ ts: new Date().toISOString(), strategien: result });
 });
-app.post('/webhook/goldglobe', (req, res) => handleWebhook(req, res, 'smart'));
 
-// ── SL Update ─────────────────────────────────────────────────────
-app.post('/webhook/update_sl/:name', async (req, res) => {
-  const { name } = req.params;
-  const { sl } = req.body;
-  if (!sl || !KONTEN[name]) return res.status(400).json({ error: 'Ungültig' });
+// Strategie-Scores (kompakt, fuer Dashboard)
+app.get('/api/strategy-scores', (req, res) => {
+  const scores = {};
+  for (const name of Object.keys(KONTEN)) {
+    const trades   = tradeHistory[name] || [];
+    const metriken = BT.berechneMetriken(trades);
+    scores[name] = {
+      score:        BT.berechneStrategieScore(metriken),
+      winRate:      metriken?.winRate      ?? null,
+      profitFactor: metriken?.profitFactor ?? null,
+      sharpe:       metriken?.sharpe       ?? null,
+      trades:       trades.length,
+      pnl:          metriken?.gesamtPnL    ?? 0,
+    };
+  }
+  res.json(scores);
+});
+
+// Preis-basierter Backtest (EMA-Crossover auf historischen Kerzen)
+app.post('/api/backtest/run', async (req, res) => {
+  const { epic = 'GOLD', resolution = 'HOUR', count = 500, ema_schnell = 9, ema_langsam = 21, slPct = 0.5, rrr = 2.0 } = req.body;
+  let name = null;
+  for (const n of Object.keys(KONTEN)) { if (KONTEN[n].cst) { name = n; break; } }
+  if (!name) return res.status(503).json({ error: 'Kein aktives Konto' });
   try {
-    await ensureAuth(name);
-    const positions = await getPositions(name);
-    const pos = positions.find(p => p.market?.epic === 'GOLD');
-    if (!pos) return res.json({ status: 'keine Position' });
-    await axios.put(`${BASE_URL}/positions/${pos.position.dealId}`, { stopLevel: parseFloat(sl) }, { headers: headers(name) });
-    res.json({ status: 'ok', sl });
+    addLog('info', `Backtest: ${epic} ${resolution} (${count} Kerzen, EMA${ema_schnell}/${ema_langsam})`);
+    const candles = await BT.fetchCandles(BASE_URL, headers(name), epic, resolution, count);
+    if (candles.length < 50) return res.status(400).json({ error: `Zu wenig Kerzen: ${candles.length}` });
+    const result = BT.preisBacktest(candles, { ema_schnell, ema_langsam, slPct, rrr });
+    addLog('info', `Backtest fertig: ${result.signale} Trades, WR ${result.metriken?.winRate ?? '?'}%, PF ${result.metriken?.profitFactor ?? '?'}`);
+    broadcast('backtest_result', { epic, ...result });
+    res.json({ epic, resolution, kerzen: candles.length, ...result });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── Settings API ──────────────────────────────────────────────────
-app.get('/api/settings', (req, res) => res.json(SETTINGS));
-
-app.post('/api/settings/:name', (req, res) => {
-  const { name } = req.params;
-  if (!SETTINGS[name]) return res.status(404).json({ error: 'Strategie nicht gefunden' });
-  const allowed = ['enabled','riskPct','leverage','maxDrawdownPct','tagsStopPct','minRRR','startEquity','tagsVerlustPct'];
-  allowed.forEach(k => { if (req.body[k] !== undefined) SETTINGS[name][k] = req.body[k]; });
-  saveSettings();
-  broadcast('settings', { name, settings: SETTINGS[name] });
-  addLog('info', `⚙️ [${name}] Settings aktualisiert: ${JSON.stringify(req.body)}`);
-  res.json({ status: 'ok', settings: SETTINGS[name] });
-});
-
-// ── Performance API ───────────────────────────────────────────────
-app.get('/api/performance', async (req, res) => {
-  const result = {};
-  for (const name of Object.keys(KONTEN)) {
-    try {
-      await ensureAuth(name);
-      performance[name].equity = await getEquity(name);
-    } catch {}
-    result[name] = performance[name];
-  }
-  res.json(result);
-});
-
-app.get('/api/equity', (req, res) => res.json(equityHistory));
-app.get('/api/trades', (req, res) => res.json(tradeHistory));
-app.get('/api/trades/:name', (req, res) => res.json(tradeHistory[req.params.name] || []));
-
-// ── Positionen API ──────────────────────────────────────────────────
-app.get('/api/positions', async (req, res) => {
-  const result = {};
-  for (const name of Object.keys(KONTEN)) {
-    try {
-      await ensureAuth(name);
-      result[name] = await getPositions(name);
-    } catch { result[name] = []; }
-  }
-  res.json(result);
-});
-
-// ── Smart Status & Reset ────────────────────────────────────────────────
-app.get('/api/smart-status', (req, res) => res.json({ ...SMART, schwellen: { pause: WR_PAUSE * 100, vorsichtig: WR_VORSICHTIG * 100, konsekMax: KONSE_MAX } }));
-
-app.post('/api/smart/reset', async (req, res) => {
-  const alt = SMART.modus;
-  SMART.modus = 'AKTIV'; SMART.pauseBis = null; SMART.konsekVerluste = 0; SMART.geaendertAm = new Date().toISOString();
-  await tg('\u{1F504} [Smart] Regime manuell zurückgesetzt: ' + alt + ' → AKTIV');
-  broadcast('regime', SMART);
-  res.json({ status: 'ok', alt, neu: 'AKTIV' });
-});
-
-// ── ML API ─────────────────────────────────────────────────────────────────
-app.get('/api/ml-status', async (req, res) => {
-  await aktualisiereMlStatus();
-  res.json({ url: ML_URL, status: mlStatus });
-});
-
-app.post('/api/ml-train', async (req, res) => {
-  if (!ML_URL) return res.status(503).json({ error: 'ML_SERVICE_URL nicht konfiguriert' });
+// Signal-Log (gesammelte TradingView-Signale fuer Backtest-Replay)
+app.get('/api/backtest/signals', (req, res) => {
   try {
-    const { strategie } = req.body;
-    const r = await axios.post(`${ML_URL}/train`, { strategie: strategie || null }, { timeout: 60000 });
-    await aktualisiereMlStatus();
-    res.json(r.data);
+    if (!fs.existsSync(SIGNALS_PATH)) return res.json({ signale: 0, daten: [] });
+    const lines   = fs.readFileSync(SIGNALS_PATH, 'utf8').trim().split('\n').filter(Boolean);
+    const signale = lines.map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+    res.json({ signale: signale.length, erste: signale[0]?.ts, letzte: signale[signale.length-1]?.ts, daten: signale.slice(-50) });
   } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-// ── AutoTune & Stunden API ───────────────────────────────────────────────
-app.get('/api/tuning', (req, res) => res.json(tuningHistory));
-app.get('/api/stunden', (req, res) => res.json(stundenStats));
-app.get('/api/logs', (req, res) => res.json(logs));
-
-app.post('/api/tuning/reset/:name', (req, res) => {
-  const { name } = req.params;
-  if (!SETTINGS[name]) return res.status(404).json({ error: 'Nicht gefunden' });
-  SETTINGS[name].riskPct = SETTINGS_ORIGINAL[name].riskPct;
-  saveSettings();
-  broadcast('settings', { name, settings: SETTINGS[name] });
-  addLog('tuning', '\u{1F504} [' + name + '] AutoTune manuell zurückgesetzt');
-  res.json({ status: 'ok', riskPct: SETTINGS[name].riskPct });
 });
 
 // ── Market Mode API ────────────────────────────────────────────────────────────
@@ -904,10 +845,4 @@ app.post('/api/market-mode/refresh', async (req, res) => {
 // ── Health ─────────────────────────────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({ status: 'ok', strategies: Object.keys(KONTEN).length, marketMode: marketMode.modus }));
 
-// ── Server starten ────────────────────────────────────────────────────────
-server.listen(PORT, () => {
-  console.log('\u{1F680} Master-Bot läuft auf Port ' + PORT);
-  setInterval(aktualisiereMlStatus,    5 * 60 * 1000);   // ML-Status alle 5 Min
-  setInterval(analysiereMarktmodus,   30 * 60 * 1000);   // Market Mode alle 30 Min
-  setTimeout(analysiereMarktmodus,          5 * 1000);   // Erster Lauf nach 5s
-});
+// ── Server starten ─────────────────────────────────�
