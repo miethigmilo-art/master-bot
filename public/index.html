@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Master Bot Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#0a0a0f;--card:#12121a;--border:#1e1e2e;--text:#e0e0f0;--muted:#555570;--gold:#f59e0b;--green:#22c55e;--red:#ef4444;--blue:#3b82f6;--purple:#8b5cf6}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;display:flex;flex-direction:column}
+/* Header */
+header{background:var(--card);border-bottom:1px solid var(--border);padding:0 24px;height:56px;display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:100}
+.logo{font-size:18px;font-weight:700;color:var(--gold);letter-spacing:-.5px}
+.logo span{color:var(--text);font-weight:400}
+.conn-bar{display:flex;align-items:center;gap:8px;margin-left:auto}
+.conn-bar input{background:#0f0f1a;border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:8px;font-size:12px;width:360px}
+.btn{padding:6px 14px;border-radius:8px;border:none;cursor:pointer;font-size:12px;font-weight:600;transition:.15s}
+.btn-gold{background:var(--gold);color:#000}.btn-gold:hover{opacity:.85}
+.btn-dark{background:var(--border);color:var(--text)}.btn-dark:hover{background:#2e2e40}
+.btn-red{background:var(--red);color:#fff}.btn-sm{padding:4px 10px;font-size:11px}
+.dot{width:8px;height:8px;border-radius:50%;background:#555}
+.dot.ok{background:var(--green);box-shadow:0 0 6px var(--green)}
+.dot.err{background:var(--red)}
+/* Nav */
+nav{background:var(--card);border-bottom:1px solid var(--border);padding:0 24px;display:flex;gap:2px}
+.nav-tab{padding:12px 16px;color:var(--muted);font-size:13px;cursor:pointer;border-bottom:2px solid transparent;transition:.15s}
+.nav-tab:hover{color:var(--text)}
+.nav-tab.active{color:var(--gold);border-bottom-color:var(--gold)}
+/* Layout */
+main{flex:1;padding:24px;max-width:1400px;margin:0 auto;width:100%}
+.page{display:none}.page.active{display:block}
+/* Cards */
+.grid{display:grid;gap:16px}
+.grid-4{grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
+.grid-2{grid-template-columns:repeat(auto-fill,minmax(420px,1fr))}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px}
+.card h3{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px}
+.big-val{font-size:28px;font-weight:700}
+.sub-val{font-size:12px;color:var(--muted);margin-top:4px}
+.pos{color:var(--green)}.neg{color:var(--red)}.gold{color:var(--gold)}
+/* Strategy Cards */
+.strat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px;margin-top:20px}
+.strat-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px}
+.strat-header{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+.strat-name{font-size:15px;font-weight:700;flex:1}
+.toggle{width:44px;height:24px;border-radius:12px;background:#333;position:relative;cursor:pointer;transition:.2s;border:none;flex-shrink:0}
+.toggle.on{background:var(--green)}
+.toggle::after{content:'';position:absolute;width:18px;height:18px;border-radius:50%;background:#fff;top:3px;left:3px;transition:.2s}
+.toggle.on::after{left:23px}
+.regime-badge{padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700}
+.regime-AKTIV{background:#1a3a1a;color:var(--green)}
+.regime-VORSICHTIG{background:#3a3a1a;color:#fbbf24}
+.regime-PAUSE{background:#3a1a1a;color:var(--red)}
+.strat-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
+.stat-box{background:#0f0f1a;border-radius:8px;padding:10px;text-align:center}
+.stat-box .v{font-size:16px;font-weight:700}
+.stat-box .l{font-size:10px;color:var(--muted);margin-top:2px}
+.chart-mini{height:80px}
+.strat-actions{display:flex;gap:8px;margin-top:14px}
+/* Settings Modal */
+.modal-bg{position:fixed;inset:0;background:#000a;display:flex;align-items:center;justify-content:center;z-index:200;display:none}
+.modal-bg.open{display:flex}
+.modal{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:28px;width:480px;max-width:95vw;max-height:90vh;overflow-y:auto}
+.modal h2{font-size:18px;font-weight:700;margin-bottom:20px}
+.field{margin-bottom:16px}
+.field label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px;font-weight:600}
+.field input[type=number],.field input[type=text]{width:100%;background:#0f0f1a;border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:8px;font-size:14px}
+.field input:focus{outline:none;border-color:var(--gold)}
+.field-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.modal-actions{display:flex;gap:8px;margin-top:20px;justify-content:flex-end}
+/* Logs */
+.log-wrap{background:#070710;border:1px solid var(--border);border-radius:10px;height:500px;overflow-y:auto;padding:12px;font-family:monospace;font-size:12px}
+.log-entry{padding:3px 0;border-bottom:1px solid #12121a}
+.log-info{color:#60a5fa}.log-warn{color:#fbbf24}.log-error{color:var(--red)}.log-tuning{color:#a3e635}
+.tuning-badge{padding:2px 6px;border-radius:10px;font-size:10px;font-weight:700;background:#1a3a00;color:#a3e635;margin-left:4px}
+.tuning-reduced{background:#3a1a00;color:#fb923c}
+/* Table */
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{color:var(--muted);font-weight:500;padding:10px 12px;text-align:left;border-bottom:1px solid var(--border)}
+td{padding:10px 12px;border-bottom:1px solid #12121a}
+tr:hover td{background:#0f0f1a}
+.badge{padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700}
+.buy{background:#1a3a1a;color:var(--green)}.sell{background:#3a1a1a;color:var(--red)}
+/* Scrollbar */
+::-webkit-scrollbar{width:4px;height:4px}::-webkit-scrollbar-track{background:#0f0f1a}::-webkit-scrollbar-thumb{background:#333;border-radius:2px}
+.section-title{font-size:14px;font-weight:700;color:var(--muted);margin-bottom:12px;text-transform:uppercase;letter-spacing:.5px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Master<span>Bot</span></div>
+  <div class="conn-bar">
+    <input id="urlInput" placeholder="https://..." value="">
+    <button class="btn btn-gold" onclick="connect()">Verbinden</button>
+    <div class="dot" id="dot"></div>
+    <span style="font-size:12px;color:var(--muted)" id="connText">Nicht verbunden</span>
+  </div>
+</header>
+
+<nav>
+  <div class="nav-tab active" onclick="showPage('dashboard',this)">Dashboard</div>
+  <div class="nav-tab" onclick="showPage('strategien',this)">Strategien</div>
+  <div class="nav-tab" onclick="showPage('trades',this)">Trades</div>
+  <div class="nav-tab" onclick="showPage('autotune',this)">⚡ AutoTune</div>
+  <div class="nav-tab" onclick="showPage('logs',this)">Live-Logs</div>
+</nav>
+
+<main>
+
+<!-- DASHBOARD -->
+<div id="page-dashboard" class="page active">
+  <div class="grid grid-4" id="overview-cards"></div>
+  <div style="margin-top:24px">
+    <div class="section-title">Equity-Kurven</div>
+    <div class="grid grid-2" id="equity-charts"></div>
+  </div>
+</div>
+
+<!-- STRATEGIEN -->
+<div id="page-strategien" class="page">
+  <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+    <span style="font-size:13px;color:var(--muted)">Alle Strategien verwalten, aktivieren/deaktivieren und einstellen</span>
+    <button class="btn btn-dark btn-sm" onclick="refreshAll()" style="margin-left:auto">↻ Aktualisieren</button>
+  </div>
+  <div class="strat-grid" id="strat-cards"></div>
+</div>
+
+<!-- TRADES -->
+<div id="page-trades" class="page">
+  <div style="display:flex;gap:10px;margin-bottom:16px;align-items:center">
+    <select id="tradeFilter" onchange="renderTrades()" style="background:#12121a;border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:8px;font-size:13px">
+      <option value="">Alle Strategien</option>
+    </select>
+    <span id="tradeCount" style="color:var(--muted);font-size:13px"></span>
+  </div>
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden">
+    <table><thead><tr><th>Datum</th><th>Strategie</th><th>Side</th><th>P&L</th><th>Equity</th></tr></thead>
+    <tbody id="trade-table"></tbody></table>
+  </div>
+</div>
+
+<!-- LOGS -->
+<div id="page-logs" class="page">
+  <div style="display:flex;gap:8px;margin-bottom:12px">
+    <button class="btn btn-dark btn-sm" onclick="clearLogs()">🗑 Logs leeren</button>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)">
+      <input type="checkbox" id="autoScroll" checked> Auto-Scroll
+    </label>
+    <span style="margin-left:auto;font-size:11px;color:var(--muted)">
+      🟢 info &nbsp; 🟡 warn &nbsp; 🔴 error &nbsp; 🟩 tuning
+    </span>
+  </div>
+  <div class="log-wrap" id="log-wrap"></div>
+</div>
+
+<!-- AutoTune Panel (auf Dashboard) -->
+<div id="page-autotune" class="page">
+  <div class="grid grid-4" id="tune-cards"></div>
+  <div style="margin-top:24px">
+    <div class="section-title">AutoTune History</div>
+    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden">
+      <table><thead><tr><th>Zeit</th><th>Strategie</th><th>Aktion</th><th>Win Rate</th><th>Konsek. Verluste</th></tr></thead>
+      <tbody id="tune-table"></tbody></table>
+    </div>
+  </div>
+</div>
+
+</main>
+
+<!-- Settings Modal -->
+<div class="modal-bg" id="modal">
+  <div class="modal">
+    <h2 id="modal-title">Einstellungen</h2>
+    <div class="field-row">
+      <div class="field"><label>Risiko %</label><input type="number" id="s-riskPct" step="0.1" min="0.1" max="10"></div>
+      <div class="field"><label>Min. RRR</label><input type="number" id="s-minRRR" step="0.1" min="1"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Leverage</label><input type="number" id="s-leverage" step="1" min="1" max="20"></div>
+      <div class="field"><label>Max. Drawdown %</label><input type="number" id="s-maxDrawdownPct" step="1" min="1"></div>
+    </div>
+    <div class="field-row">
+      <div class="field"><label>Tagesziel %</label><input type="number" id="s-tagsStopPct" step="0.5" min="0.1"></div>
+      <div class="field"><label>Start-Equity (€)</label><input type="number" id="s-startEquity" step="100" min="100"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-dark" onclick="closeModal()">Abbrechen</button>
+      <button class="btn btn-gold" onclick="saveSettings()">Speichern</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const STRAT_NAMES = ['mittel','aggressiv','smart','konservativ','optimiert','test','adaptive','steady'];
+const STRAT_COLORS = { mittel:'#f59e0b',aggressiv:'#ef4444',smart:'#8b5cf6',konservativ:'#22c55e',optimiert:'#3b82f6',test:'#ec4899',adaptive:'#06b6d4',steady:'#a3e635' };
+
+let BASE = '', ws = null, settings = {}, performance = {}, equityData = {}, allTrades = {}, charts = {}, currentModalStrat = null;
+let tuningData = {}, settingsOriginal = {};
+
+function showPage(id, el) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById(`page-${id}`).classList.add('active');
+  el.classList.add('active');
+  if (id === 'trades') renderTrades();
+  if (id === 'autotune') renderTuning();
+}
+
+function setConn(ok, msg) {
+  document.getElementById('dot').className = 'dot ' + (ok ? 'ok' : 'err');
+  document.getElementById('connText').textContent = msg;
+}
+
+async function connect() {
+  BASE = document.getElementById('urlInput').value.trim().replace(/\/$/, '');
+  if (!BASE) return;
+  localStorage.setItem('mb_url', BASE);
+  setConn(false, 'Verbinde...');
+  try {
+    const [perf, eq, tr, sett, tune] = await Promise.all([
+      fetch(`${BASE}/api/performance`).then(r => r.json()),
+      fetch(`${BASE}/api/equity`).then(r => r.json()),
+      fetch(`${BASE}/api/trades`).then(r => r.json()),
+      fetch(`${BASE}/api/settings`).then(r => r.json()),
+      fetch(`${BASE}/api/tuning`).then(r => r.json()),
+    ]);
+    performance = perf; equityData = eq; allTrades = tr; settings = sett; tuningData = tune;
+    settingsOriginal = JSON.parse(JSON.stringify(sett)); // Originalwerte merken
+    setConn(true, `Verbunden — ${new Date().toLocaleTimeString('de-DE')}`);
+    renderDashboard(); renderStratCards(); populateTradeFilter();
+    connectWS();
+  } catch(e) { setConn(false, 'Fehler: ' + e.message); }
+}
+
+function connectWS() {
+  if (ws) ws.close();
+  const wsUrl = BASE.replace('https://','wss://').replace('http://','ws://');
+  ws = new WebSocket(wsUrl);
+  ws.onmessage = ({data}) => {
+    const { type, data: d } = JSON.parse(data);
+    if (type === 'init') { if (d.settings) settings = d.settings; if (d.performance) { performance = d.performance; renderDashboard(); renderStratCards(); } if (d.logs) d.logs.forEach(l => appendLog(l)); }
+    if (type === 'performance') { performance[d.name] = d.perf; updateStratCard(d.name); updateOverviewCard(d.name); }
+    if (type === 'equity') { if (!equityData[d.name]) equityData[d.name] = []; equityData[d.name].push({ts:d.ts,equity:d.equity}); updateChart(d.name); }
+    if (type === 'trade') { if (!allTrades[d.name]) allTrades[d.name] = []; allTrades[d.name].unshift(d); }
+    if (type === 'log') appendLog(d);
+    if (type === 'settings') { settings[d.name] = d.settings; renderStratCards(); }
+    if (type === 'regime') updateRegimeBadge(d);
+    if (type === 'tuning') {
+      if (!tuningData[d.name]) tuningData[d.name] = [];
+      tuningData[d.name].unshift(d);
+      appendLog({ level:'tuning', msg: d.aktion, ts: d.ts });
+      renderStratCards(); // Risk-Badge aktualisieren
+    }
+  };
+  ws.onclose = () => setConn(false, 'Verbindung unterbrochen');
+}
+
+// ── Dashboard ──────────────────────────────────────────
+function renderDashboard() {
+  const cards = document.getElementById('overview-cards');
+  let totalPnL = 0;
+  cards.innerHTML = '';
+  STRAT_NAMES.forEach(n => {
+    const p = performance[n] || {}; totalPnL += p.gesamtPnL || 0;
+    const pnl = p.gesamtPnL || 0; const cls = pnl >= 0 ? 'pos' : 'neg';
+    cards.innerHTML += `<div class="card" id="ov-${n}">
+      <h3>${n}</h3>
+      <div class="big-val ${cls}" id="ov-pnl-${n}">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}€</div>
+      <div class="sub-val">Win: <span id="ov-wr-${n}">${p.winRate||0}%</span> · Trades: <span id="ov-t-${n}">${p.trades||0}</span></div>
+      <div class="sub-val" style="margin-top:4px">Equity: <span class="gold">${(p.equity||0).toFixed(2)}€</span></div>
+    </div>`;
+  });
+  cards.innerHTML += `<div class="card" style="border-color:var(--gold)22">
+    <h3>Gesamt P&L</h3>
+    <div class="big-val gold">${totalPnL >= 0 ? '+' : ''}${totalPnL.toFixed(2)}€</div>
+    <div class="sub-val">Alle ${STRAT_NAMES.length} Strategien</div>
+  </div>`;
+
+  // Equity Charts
+  const ec = document.getElementById('equity-charts');
+  ec.innerHTML = '';
+  STRAT_NAMES.forEach(n => {
+    ec.innerHTML += `<div class="card"><h3>${n} — Equity</h3><canvas id="chart-${n}" height="100"></canvas></div>`;
+  });
+  STRAT_NAMES.forEach(n => buildChart(n));
+}
+
+function updateOverviewCard(name) {
+  const p = performance[name] || {};
+  const el = document.getElementById(`ov-pnl-${name}`); if (!el) return;
+  const pnl = p.gesamtPnL || 0;
+  el.textContent = (pnl >= 0 ? '+' : '') + pnl.toFixed(2) + '€';
+  el.className = 'big-val ' + (pnl >= 0 ? 'pos' : 'neg');
+  const wr = document.getElementById(`ov-wr-${name}`); if (wr) wr.textContent = (p.winRate||0) + '%';
+  const t = document.getElementById(`ov-t-${name}`); if (t) t.textContent = p.trades||0;
+}
+
+function buildChart(name) {
+  const canvas = document.getElementById(`chart-${name}`); if (!canvas) return;
+  if (charts[name]) { charts[name].destroy(); delete charts[name]; }
+  const data = equityData[name] || [];
+  charts[name] = new Chart(canvas, {
+    type: 'line',
+    data: { labels: data.map(d => new Date(d.ts).toLocaleDateString('de-DE')), datasets: [{ label:'Equity', data: data.map(d => d.equity), borderColor: STRAT_COLORS[name], backgroundColor: STRAT_COLORS[name]+'22', fill:true, tension:.3, pointRadius:0 }] },
+    options: { responsive:true, plugins:{legend:{display:false}}, scales:{ x:{ticks:{color:'#555',maxTicksLimit:5},grid:{color:'#1e1e2e'}}, y:{ticks:{color:'#555'},grid:{color:'#1e1e2e'}} } }
+  });
+}
+
+function updateChart(name) {
+  const c = charts[name]; if (!c) return;
+  const data = equityData[name] || [];
+  c.data.labels = data.map(d => new Date(d.ts).toLocaleDateString('de-DE'));
+  c.data.datasets[0].data = data.map(d => d.equity);
+  c.update('quiet');
+}
+
+// ── Strategie Cards ────────────────────────────────────
+function renderStratCards() {
+  const container = document.getElementById('strat-cards');
+  container.innerHTML = '';
+  STRAT_NAMES.forEach(n => {
+    const s = settings[n] || {}; const p = performance[n] || {};
+    const pnl = p.gesamtPnL || 0; const isOn = s.enabled !== false;
+    const isSmart = n === 'smart';
+    container.innerHTML += `<div class="strat-card" id="sc-${n}">
+      <div class="strat-header">
+        <div style="width:10px;height:10px;border-radius:50%;background:${STRAT_COLORS[n]}"></div>
+        <span class="strat-name">${n.charAt(0).toUpperCase()+n.slice(1)}</span>
+        ${isSmart ? `<span class="regime-badge regime-AKTIV" id="regime-badge">AKTIV</span>` : ''}
+        ${isRiskReduced(n) ? `<span class="tuning-badge tuning-reduced">⚡ reduziert</span>` : ''}
+        <button class="toggle ${isOn ? 'on' : ''}" id="toggle-${n}" onclick="toggleStrat('${n}')"></button>
+      </div>
+      <div class="strat-stats">
+        <div class="stat-box"><div class="v ${pnl >= 0 ? 'pos' : 'neg'}">${pnl >= 0 ? '+' : ''}${pnl.toFixed(1)}€</div><div class="l">P&L</div></div>
+        <div class="stat-box"><div class="v">${p.winRate||0}%</div><div class="l">Win Rate</div></div>
+        <div class="stat-box"><div class="v">${p.trades||0}</div><div class="l">Trades</div></div>
+      </div>
+      <div style="font-size:11px;color:var(--muted);display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:12px">
+        <span>Risiko: <b style="color:var(--text)">${s.riskPct||0}%</b></span>
+        <span>RRR: <b style="color:var(--text)">${s.minRRR||0}</b></span>
+        <span>Leverage: <b style="color:var(--text)">${s.leverage||0}x</b></span>
+        <span>Max DD: <b style="color:var(--text)">${s.maxDrawdownPct||0}%</b></span>
+      </div>
+      <canvas id="sc-chart-${n}" class="chart-mini"></canvas>
+      <div class="strat-actions">
+        <button class="btn btn-dark btn-sm" onclick="openSettings('${n}')" style="flex:1">⚙️ Einstellungen</button>
+        ${isRiskReduced(n) ? `<button class="btn btn-sm" style="background:#1a3a00;color:#a3e635" onclick="resetTuning('${n}')">↑ Risk reset</button>` : ''}
+        ${isSmart ? `<button class="btn btn-sm" style="background:#3a1a1a;color:var(--red)" onclick="resetSmartRegime()">Reset Regime</button>` : ''}
+      </div>
+    </div>`;
+  });
+  STRAT_NAMES.forEach(n => buildMiniChart(n));
+}
+
+function buildMiniChart(name) {
+  const canvas = document.getElementById(`sc-chart-${name}`); if (!canvas) return;
+  const data = (equityData[name] || []).slice(-30);
+  if (!data.length) return;
+  new Chart(canvas, {
+    type:'line',
+    data:{ labels: data.map((_,i)=>i), datasets:[{ data: data.map(d=>d.equity), borderColor: STRAT_COLORS[name], borderWidth:1.5, fill:false, tension:.3, pointRadius:0 }] },
+    options:{ responsive:true, plugins:{legend:{display:false},tooltip:{enabled:false}}, scales:{x:{display:false},y:{display:false}}, animation:false }
+  });
+}
+
+function updateStratCard(name) {
+  const p = performance[name] || {}; const s = settings[name] || {};
+  const card = document.getElementById(`sc-${name}`); if (!card) return;
+  const pnl = p.gesamtPnL || 0;
+  const cells = card.querySelectorAll('.stat-box .v');
+  if (cells[0]) { cells[0].textContent = (pnl >= 0 ? '+' : '') + pnl.toFixed(1) + '€'; cells[0].className = 'v ' + (pnl >= 0 ? 'pos' : 'neg'); }
+  if (cells[1]) cells[1].textContent = (p.winRate||0) + '%';
+  if (cells[2]) cells[2].textContent = p.trades||0;
+}
+
+async function toggleStrat(name) {
+  const s = settings[name] || {}; const newVal = !s.enabled;
+  try {
+    await fetch(`${BASE}/api/settings/${name}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ enabled: newVal }) });
+    settings[name].enabled = newVal;
+    const btn = document.getElementById(`toggle-${name}`);
+    if (btn) btn.className = 'toggle ' + (newVal ? 'on' : '');
+  } catch(e) { alert('Fehler: ' + e.message); }
+}
+
+function updateRegimeBadge(smart) {
+  const el = document.getElementById('regime-badge'); if (!el) return;
+  el.className = `regime-badge regime-${smart.modus}`;
+  el.textContent = smart.modus;
+}
+
+async function resetSmartRegime() {
+  try { await fetch(`${BASE}/api/smart/reset`, { method:'POST' }); alert('Regime zurückgesetzt ✅'); }
+  catch(e) { alert('Fehler: ' + e.message); }
+}
+
+function isRiskReduced(name) {
+  const cur = settings[name]?.riskPct;
+  const orig = settingsOriginal[name]?.riskPct;
+  return cur && orig && cur < orig;
+}
+
+async function resetTuning(name) {
+  try {
+    await fetch(`${BASE}/api/tuning/reset/${name}`, { method:'POST' });
+    if (settings[name] && settingsOriginal[name]) settings[name].riskPct = settingsOriginal[name].riskPct;
+    renderStratCards();
+  } catch(e) { alert('Fehler: ' + e.message); }
+}
+
+// ── AutoTune Tab ──────────────────────────────────────
+async function renderTuning() {
+  // Status-Karten
+  const cards = document.getElementById('tune-cards');
+  cards.innerHTML = STRAT_NAMES.map(n => {
+    const s = settings[n] || {};
+    const orig = settingsOriginal[n] || {};
+    const reduced = isRiskReduced(n);
+    const history = tuningData[n] || [];
+    return `<div class="card">
+      <h3>${n}</h3>
+      <div style="font-size:22px;font-weight:700;color:${reduced ? '#fb923c' : '#a3e635'}">${s.riskPct||0}%</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">
+        ${reduced ? `⚡ reduziert (Original: ${orig.riskPct||0}%)` : '✅ Normal (${orig.riskPct||0}%)'}
+      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:8px">${history.length} AutoTune Events</div>
+      ${reduced ? `<button class="btn btn-dark btn-sm" style="margin-top:10px;width:100%;color:#a3e635" onclick="resetTuning('${n}')">↑ Risk zurücksetzen</button>` : ''}
+    </div>`;
+  }).join('');
+
+  // History Tabelle
+  let rows = [];
+  Object.entries(tuningData).forEach(([name, events]) => {
+    (events || []).forEach(e => rows.push({ ...e, name }));
+  });
+  rows.sort((a,b) => new Date(b.ts) - new Date(a.ts));
+  document.getElementById('tune-table').innerHTML = rows.slice(0,100).map(r => `
+    <tr>
+      <td>${new Date(r.ts).toLocaleString('de-DE')}</td>
+      <td><span style="color:${STRAT_COLORS[r.name]}">${r.name}</span></td>
+      <td style="color:${r.aktion?.includes('🔽') ? '#fb923c' : '#a3e635'}">${r.aktion || r.msg || '–'}</td>
+      <td>${r.wr != null ? r.wr + '%' : '–'}</td>
+      <td>${r.konsek != null ? r.konsek : '–'}</td>
+    </tr>`).join('');
+}
+
+// ── Settings Modal ─────────────────────────────────────
+function openSettings(name) {
+  currentModalStrat = name;
+  const s = settings[name] || {};
+  document.getElementById('modal-title').textContent = `⚙️ ${name.charAt(0).toUpperCase()+name.slice(1)} — Einstellungen`;
+  document.getElementById('s-riskPct').value = s.riskPct || 1;
+  document.getElementById('s-minRRR').value = s.minRRR || 2;
+  document.getElementById('s-leverage').value = s.leverage || 5;
+  document.getElementById('s-maxDrawdownPct').value = s.maxDrawdownPct || 20;
+  document.getElementById('s-tagsStopPct').value = s.tagsStopPct || 5;
+  document.getElementById('s-startEquity').value = s.startEquity || 1000;
+  document.getElementById('modal').classList.add('open');
+}
+function closeModal() { document.getElementById('modal').classList.remove('open'); }
+
+async function saveSettings() {
+  if (!currentModalStrat) return;
+  const body = {
+    riskPct: parseFloat(document.getElementById('s-riskPct').value),
+    minRRR: parseFloat(document.getElementById('s-minRRR').value),
+    leverage: parseInt(document.getElementById('s-leverage').value),
+    maxDrawdownPct: parseFloat(document.getElementById('s-maxDrawdownPct').value),
+    tagsStopPct: parseFloat(document.getElementById('s-tagsStopPct').value),
+    startEquity: parseFloat(document.getElementById('s-startEquity').value),
+  };
+  try {
+    await fetch(`${BASE}/api/settings/${currentModalStrat}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    settings[currentModalStrat] = { ...settings[currentModalStrat], ...body };
+    closeModal(); renderStratCards();
+  } catch(e) { alert('Fehler: ' + e.message); }
+}
+
+document.getElementById('modal').addEventListener('click', e => { if (e.target === document.getElementById('modal')) closeModal(); });
+
+// ── Trades ────────────────────────────────────────────
+function populateTradeFilter() {
+  const sel = document.getElementById('tradeFilter');
+  STRAT_NAMES.forEach(n => { const o = document.createElement('option'); o.value=n; o.textContent=n; sel.appendChild(o); });
+}
+
+function renderTrades() {
+  const filter = document.getElementById('tradeFilter').value;
+  let rows = [];
+  const sources = filter ? { [filter]: allTrades[filter] || [] } : allTrades;
+  Object.entries(sources).forEach(([name, trades]) => {
+    (trades || []).forEach(t => rows.push({ ...t, name }));
+  });
+  rows.sort((a,b) => new Date(b.datum) - new Date(a.datum));
+  document.getElementById('tradeCount').textContent = rows.length + ' Trades';
+  document.getElementById('trade-table').innerHTML = rows.slice(0,200).map(t => {
+    const pnl = t.pnl || 0; const cls = pnl >= 0 ? 'pos' : 'neg';
+    return `<tr><td>${new Date(t.datum).toLocaleString('de-DE')}</td><td><span style="color:${STRAT_COLORS[t.name]}">${t.name}</span></td>
+    <td><span class="badge ${t.side==='BUY'?'buy':'sell'}">${t.side||'–'}</span></td>
+    <td class="${cls}">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}€</td>
+    <td>${(t.equity||0).toFixed(2)}€</td></tr>`;
+  }).join('');
+}
+
+// ── Logs ──────────────────────────────────────────────
+function appendLog(entry) {
+  const wrap = document.getElementById('log-wrap');
+  const div = document.createElement('div');
+  div.className = `log-entry log-${entry.level}`;
+  div.textContent = `[${new Date(entry.ts).toLocaleTimeString('de-DE')}] ${entry.msg}`;
+  wrap.appendChild(div);
+  if (document.getElementById('autoScroll').checked) wrap.scrollTop = wrap.scrollHeight;
+  while (wrap.children.length > 300) wrap.removeChild(wrap.firstChild);
+}
+function clearLogs() { document.getElementById('log-wrap').innerHTML = ''; }
+
+async function refreshAll() { await connect(); }
+
+// ── Init ──────────────────────────────────────────────
+window.onload = () => {
+  const saved = localStorage.getItem('mb_url') || '';
+  if (saved) { document.getElementById('urlInput').value = saved; connect(); }
+};
+</script>
+</body>
+</html>

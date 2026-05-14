@@ -1,0 +1,13 @@
+{
+  "name": "master-bot",
+  "version": "1.0.0",
+  "description": "Gold Trading Master Bot — Capital.com mit eigenem Dashboard",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "dependencies": {
+    "axios": "^1.15.0",
+    "dotenv": "^17.0.0",
+    "express": "^4.21.0",
+    "ws": "^8.18.0"
+  }
+}
