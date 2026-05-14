@@ -65,6 +65,10 @@ let stundenStats    = loadJSON(STUNDEN_PATH, {});  // FIX 4: Beim Start aus Date
 // Speichert Feature-Objekte ausgeführter Trades bis der PnL bekannt ist
 const pendingFeatures = {};
 
+// ── Market Mode State ─────────────────────────────────────────────────
+const MARKET_MODE_PATH = path.join(DATA_DIR, 'market_mode.json');
+let marketMode = loadJSON(MARKET_MODE_PATH, { modus: 'SIDEWAYS', ema20: null, ema50: null, atr: null, atrAvg: null, aktualisiertAm: null });
+
 // AutoTune Schwellen
 const TUNING = {
   WR_REDUCE:          0.40,  // unter 40% Rolling-WR → Risk halbieren
@@ -79,6 +83,16 @@ const TUNING = {
 // Smart Regime
 const SMART = { modus: 'AKTIV', pauseBis: null, geaendertAm: null, rollendeWR: null, konsekVerluste: 0 };
 const WR_PAUSE = 0.35, WR_VORSICHTIG = 0.42, KONSE_MAX = 4, PAUSE_MS = 2 * 60 * 60 * 1000;
+
+// ── Market Mode Konfiguration ─────────────────────────────────────────
+// sizingFaktor: multipliziert ML-Sizing (z.B. 0.7 × 1.0× ML = 0.7× Position)
+const MARKET_MODES = {
+  PANIC:    { emoji: '🆘', sizingFaktor: 0.0 },  // Kein Trading — zu gefährlich
+  HIGH_VOL: { emoji: '⚡', sizingFaktor: 0.7 },  // Erhöhte Volatilität — kleiner
+  BEAR:     { emoji: '🐻', sizingFaktor: 0.8 },  // Bärenmarkt — vorsichtig
+  SIDEWAYS: { emoji: '➡️', sizingFaktor: 1.0 },  // Seitwärtstrend — normal
+  BULL:     { emoji: '🐂', sizingFaktor: 1.2 },  // Bullenmarkt — aggressiver
+};
 
 function buildDefaultPerf() {
   const p = {};
@@ -368,6 +382,7 @@ function logFeature(name, side, equity, rrr, ausgefuehrt, grund = null, extras =
       rrr:        rrr || null,
       ausgefuehrt,
       grund,
+      marketModus: marketMode.modus,
       // FIX 3: Neue Features für besseres ML-Training
       slDistPct:      (entry != null && slF != null && entry > 0)
                         ? parseFloat((Math.abs(entry - slF) / entry * 100).toFixed(3))
@@ -394,6 +409,107 @@ function logFeature(name, side, equity, rrr, ausgefuehrt, grund = null, extras =
       fs.appendFileSync(FEATURES_PATH, JSON.stringify(feature) + '\n');
     }
   } catch {}
+}
+
+// ── Market Mode Detection (V2) ───────────────────────────────────────
+
+function berechneEMA(werte, periode) {
+  if (!werte || werte.length < periode) return null;
+  const k = 2 / (periode + 1);
+  let ema = werte.slice(0, periode).reduce((a, b) => a + b, 0) / periode;
+  for (let i = periode; i < werte.length; i++) ema = werte[i] * k + ema * (1 - k);
+  return parseFloat(ema.toFixed(4));
+}
+
+function berechneATR(candles, periode = 14) {
+  if (!candles || candles.length < periode + 1) return null;
+  const mid = c => ((c?.bid || 0) + (c?.ask || 0)) / 2 || c?.bid || 0;
+  const trs = [];
+  for (let i = 1; i < candles.length; i++) {
+    const h = mid(candles[i].highPrice), l = mid(candles[i].lowPrice), c = mid(candles[i-1].closePrice);
+    if (!h || !l || !c) continue;
+    trs.push(Math.max(h - l, Math.abs(h - c), Math.abs(l - c)));
+  }
+  if (trs.length < periode) return null;
+  let atr = trs.slice(0, periode).reduce((a, b) => a + b, 0) / periode;
+  const alle = [atr];
+  for (let i = periode; i < trs.length; i++) { atr = (atr * (periode - 1) + trs[i]) / periode; alle.push(atr); }
+  return { current: alle[alle.length - 1], avg: alle.reduce((a, b) => a + b, 0) / alle.length };
+}
+
+async function analysiereMarktmodus() {
+  // Eingeloggtes Konto finden
+  let name = null;
+  for (const n of Object.keys(KONTEN)) { if (KONTEN[n].cst) { name = n; break; } }
+  if (!name) {
+    for (const n of Object.keys(KONTEN)) {
+      if (KONTEN[n].apiKey && KONTEN[n].email && KONTEN[n].password) {
+        try { await ensureAuth(n); name = n; break; } catch {}
+      }
+    }
+  }
+  if (!name) { addLog('warn', '⚠️ Market Mode: Kein verfügbares Konto für Marktdaten'); return; }
+
+  try {
+    const res = await axios.get(`${BASE_URL}/prices/GOLD`, {
+      headers: headers(name),
+      params:  { resolution: 'HOUR', max: 100 },
+      timeout: 10000,
+    });
+    const candles = res.data.prices;
+    if (!candles || candles.length < 55) {
+      addLog('warn', `⚠️ Market Mode: Zu wenig Kerzen (${candles?.length || 0})`);
+      return;
+    }
+
+    const mid    = c => ((c?.bid || 0) + (c?.ask || 0)) / 2 || c?.bid || 0;
+    const closes = candles.map(c => mid(c.closePrice));
+    const preis  = closes[closes.length - 1];
+
+    const ema20     = berechneEMA(closes, 20);
+    const ema50     = berechneEMA(closes, 50);
+    const atrResult = berechneATR(candles, 14);
+    const atr       = atrResult?.current;
+    const atrAvg    = atrResult?.avg;
+
+    // 5-Stunden-Momentum in %
+    const momentum = closes.length >= 5
+      ? parseFloat(((preis - closes[closes.length - 5]) / closes[closes.length - 5] * 100).toFixed(2))
+      : 0;
+
+    // Modus bestimmen
+    let neuerModus;
+    if (atr && atrAvg && atr > atrAvg * 1.8 && momentum < -2.5) neuerModus = 'PANIC';
+    else if (atr && atrAvg && atr > atrAvg * 1.5)               neuerModus = 'HIGH_VOL';
+    else if (ema20 && ema50 && preis > ema20 && ema20 > ema50 && momentum > 0) neuerModus = 'BULL';
+    else if (ema20 && ema50 && preis < ema20 && ema20 < ema50 && momentum < 0) neuerModus = 'BEAR';
+    else                                                                         neuerModus = 'SIDEWAYS';
+
+    const alter = marketMode.modus;
+    marketMode = {
+      modus: neuerModus, preis: parseFloat(preis.toFixed(2)),
+      ema20, ema50,
+      atr:    atr    ? parseFloat(atr.toFixed(4))    : null,
+      atrAvg: atrAvg ? parseFloat(atrAvg.toFixed(4)) : null,
+      momentum, aktualisiertAm: new Date().toISOString(),
+    };
+    saveJSON(MARKET_MODE_PATH, marketMode);
+    broadcast('market_mode', marketMode);
+
+    const cfg = MARKET_MODES[neuerModus];
+    if (neuerModus !== alter) {
+      addLog('info', `${cfg.emoji} Market Mode: ${alter} → ${neuerModus} (EMA20=${ema20}, EMA50=${ema50}, ATR=${atr?.toFixed(2)}, Momentum=${momentum}%)`);
+      await tg(`${cfg.emoji} <b>Market Mode: ${alter} → ${neuerModus}</b>\nEMA20: ${ema20} | EMA50: ${ema50} | Momentum: ${momentum}%`);
+    } else {
+      addLog('info', `📊 Market Mode: ${neuerModus} — EMA20=${ema20}, Momentum=${momentum}%`);
+    }
+  } catch (err) {
+    addLog('warn', `⚠️ Market Mode Analyse: ${err.message}`);
+  }
+}
+
+function getMarktSizingFaktor() {
+  return MARKET_MODES[marketMode.modus]?.sizingFaktor ?? 1.0;
 }
 
 // ── Webhook Handler ───────────────────────────────────
@@ -452,6 +568,13 @@ async function handleWebhook(req, res, name) {
         return res.json({ status: 'übersprungen', grund: 'VORSICHTIG – nur LONG' });
     }
 
+    // ── Market Mode: PANIC → kein Trading ─────────────────────────────
+    if (marketMode.modus === 'PANIC') {
+      addLog('warn', `🆘 [${name}] Trade blockiert: PANIC Modus`);
+      logFeature(name, side, equity, null, false, 'PANIC Modus', {});
+      return res.json({ status: 'übersprungen', grund: 'PANIC Modus — kein Trading' });
+    }
+
     // PnL aufzeichnen
     if (letzteEquity[name] != null) {
       const pnl = parseFloat((equity - letzteEquity[name]).toFixed(2));
@@ -506,8 +629,11 @@ async function handleWebhook(req, res, name) {
 
     await closePositions(name, 'GOLD');
 
-    // Konfidenz-basiertes Sizing: ML gibt sizing_faktor zurück (0.5 / 1.0 / 1.5)
-    const sizingFaktor = ml.sizing_faktor != null ? ml.sizing_faktor : 1.0;
+    // Kombinations-Sizing: ML-Konfidenz × Market Mode
+    // Beispiel: ML=1.5× (hohe Konfidenz) × BEAR=0.8 → 1.2× Endgröße
+    const mlSizing     = ml.sizing_faktor != null ? ml.sizing_faktor : 1.0;
+    const sizingFaktor = parseFloat((mlSizing * getMarktSizingFaktor()).toFixed(2));
+    addLog('info', `📐 [${name}] Sizing: ML=${mlSizing}× × Markt(${marketMode.modus})=${getMarktSizingFaktor()}× → ${sizingFaktor}×`);
     const riskCapital = equity * (s.riskPct / 100) * sizingFaktor;
     const size = slDist > 0 ? Math.max(1, parseFloat((riskCapital / slDist).toFixed(1))) : 1;
 
@@ -636,8 +762,152 @@ app.post('/api/tuning/reset/:name', (req, res) => {
   res.json({ status: 'ok', riskPct: SETTINGS[name].riskPct });
 });
 
+// ── Market Mode API ────────────────────────────────────────────────────────────
+app.get('/api/market-mode', (req, res) => res.json({ ...marketMode, config: MARKET_MODES }));
+
+app.post('/api/market-mode/refresh', async (req, res) => {
+  await analysiereMarktmodus();
+  res.json(marketMode);
+});
+
 // ── Health ─────────────────────────────────────────────────────────────────────
-app.get('/health', (req, res) => res.json({ status: 'ok', strategies: Object.keys(KONTEN).length }));
+app.get('/health', (req, res) => res.json({ status: 'ok', strategies: Object.keys(KONTEN).length, marketMode: marketMode.modus }));
 
 // ── Server starten ────────────────────────────────────────────────────────
-server.liste
+server.listen(PORT, () => {
+  console.log(`\u{1F680} Master-Bot läuft auf Port ${PORT}`);
+  setInterval(aktualisiereMlStatus,    5 * 60 * 1000);   // ML-Status alle 5 Min
+  setInterval(analysiereMarktmodus,   30 * 60 * 1000);   // Market Mode alle 30 Min
+  setTimeout(analysiereMarktmodus,          5 * 1000);   // Erster Lauf nach 5s (Auth braucht Zeit)
+});
+    res.status(500).json({ error: err.message, detail });
+  } finally {
+    aktiveTrades[name] = false;
+    letzterTrade[name] = Date.now();
+  }
+}
+
+// ── Webhook Routen ─────────────────────────────────────────────────
+['mittel','aggressiv','smart','konservativ','optimiert','test','adaptive','steady'].forEach(n => {
+  app.post(`/webhook/${n}`, (req, res) => handleWebhook(req, res, n));
+});
+app.post('/webhook/goldglobe', (req, res) => handleWebhook(req, res, 'smart'));
+
+// ── SL Update ─────────────────────────────────────────────────────
+app.post('/webhook/update_sl/:name', async (req, res) => {
+  const { name } = req.params;
+  const { sl } = req.body;
+  if (!sl || !KONTEN[name]) return res.status(400).json({ error: 'Ungültig' });
+  try {
+    await ensureAuth(name);
+    const positions = await getPositions(name);
+    const pos = positions.find(p => p.market?.epic === 'GOLD');
+    if (!pos) return res.json({ status: 'keine Position' });
+    await axios.put(`${BASE_URL}/positions/${pos.position.dealId}`, { stopLevel: parseFloat(sl) }, { headers: headers(name) });
+    res.json({ status: 'ok', sl });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Settings API ──────────────────────────────────────────────────
+app.get('/api/settings', (req, res) => res.json(SETTINGS));
+
+app.post('/api/settings/:name', (req, res) => {
+  const { name } = req.params;
+  if (!SETTINGS[name]) return res.status(404).json({ error: 'Strategie nicht gefunden' });
+  const allowed = ['enabled','riskPct','leverage','maxDrawdownPct','tagsStopPct','minRRR','startEquity','tagsVerlustPct'];
+  allowed.forEach(k => { if (req.body[k] !== undefined) SETTINGS[name][k] = req.body[k]; });
+  saveSettings();
+  broadcast('settings', { name, settings: SETTINGS[name] });
+  addLog('info', `⚙️ [${name}] Settings aktualisiert: ${JSON.stringify(req.body)}`);
+  res.json({ status: 'ok', settings: SETTINGS[name] });
+});
+
+// ── Performance API ───────────────────────────────────────────────
+app.get('/api/performance', async (req, res) => {
+  const result = {};
+  for (const name of Object.keys(KONTEN)) {
+    try {
+      await ensureAuth(name);
+      performance[name].equity = await getEquity(name);
+    } catch {}
+    result[name] = performance[name];
+  }
+  res.json(result);
+});
+
+app.get('/api/equity', (req, res) => res.json(equityHistory));
+app.get('/api/trades', (req, res) => res.json(tradeHistory));
+app.get('/api/trades/:name', (req, res) => res.json(tradeHistory[req.params.name] || []));
+
+// ── Positionen API ──────────────────────────────────────────────────
+app.get('/api/positions', async (req, res) => {
+  const result = {};
+  for (const name of Object.keys(KONTEN)) {
+    try {
+      await ensureAuth(name);
+      result[name] = await getPositions(name);
+    } catch { result[name] = []; }
+  }
+  res.json(result);
+});
+
+// ── Smart Status & Reset ────────────────────────────────────────────────
+app.get('/api/smart-status', (req, res) => res.json({ ...SMART, schwellen: { pause: WR_PAUSE * 100, vorsichtig: WR_VORSICHTIG * 100, konsekMax: KONSE_MAX } }));
+
+app.post('/api/smart/reset', async (req, res) => {
+  const alt = SMART.modus;
+  SMART.modus = 'AKTIV'; SMART.pauseBis = null; SMART.konsekVerluste = 0; SMART.geaendertAm = new Date().toISOString();
+  await tg('\u{1F504} [Smart] Regime manuell zurückgesetzt: ' + alt + ' → AKTIV');
+  broadcast('regime', SMART);
+  res.json({ status: 'ok', alt, neu: 'AKTIV' });
+});
+
+// ── ML API ─────────────────────────────────────────────────────────────────
+app.get('/api/ml-status', async (req, res) => {
+  await aktualisiereMlStatus();
+  res.json({ url: ML_URL, status: mlStatus });
+});
+
+app.post('/api/ml-train', async (req, res) => {
+  if (!ML_URL) return res.status(503).json({ error: 'ML_SERVICE_URL nicht konfiguriert' });
+  try {
+    const { strategie } = req.body;
+    const r = await axios.post(`${ML_URL}/train`, { strategie: strategie || null }, { timeout: 60000 });
+    await aktualisiereMlStatus();
+    res.json(r.data);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── AutoTune & Stunden API ───────────────────────────────────────────────
+app.get('/api/tuning', (req, res) => res.json(tuningHistory));
+app.get('/api/stunden', (req, res) => res.json(stundenStats));
+app.get('/api/logs', (req, res) => res.json(logs));
+
+app.post('/api/tuning/reset/:name', (req, res) => {
+  const { name } = req.params;
+  if (!SETTINGS[name]) return res.status(404).json({ error: 'Nicht gefunden' });
+  SETTINGS[name].riskPct = SETTINGS_ORIGINAL[name].riskPct;
+  saveSettings();
+  broadcast('settings', { name, settings: SETTINGS[name] });
+  addLog('tuning', '\u{1F504} [' + name + '] AutoTune manuell zurückgesetzt');
+  res.json({ status: 'ok', riskPct: SETTINGS[name].riskPct });
+});
+
+// ── Market Mode API ────────────────────────────────────────────────────────────
+app.get('/api/market-mode', (req, res) => res.json({ ...marketMode, config: MARKET_MODES }));
+
+app.post('/api/market-mode/refresh', async (req, res) => {
+  await analysiereMarktmodus();
+  res.json(marketMode);
+});
+
+// ── Health ─────────────────────────────────────────────────────────────────────
+app.get('/health', (req, res) => res.json({ status: 'ok', strategies: Object.keys(KONTEN).length, marketMode: marketMode.modus }));
+
+// ── Server starten ────────────────────────────────────────────────────────
+server.listen(PORT, () => {
+  console.log('\u{1F680} Master-Bot läuft auf Port ' + PORT);
+  setInterval(aktualisiereMlStatus,    5 * 60 * 1000);   // ML-Status alle 5 Min
+  setInterval(analysiereMarktmodus,   30 * 60 * 1000);   // Market Mode alle 30 Min
+  setTimeout(analysiereMarktmodus,          5 * 1000);   // Erster Lauf nach 5s
+});
