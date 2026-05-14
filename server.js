@@ -56,9 +56,14 @@ let letzterTrade  = {};
 let logs          = [];
 
 // ── AutoTune State ────────────────────────────────────
-const TUNING_PATH  = path.join(DATA_DIR, 'tuning.json');
-let tuningHistory  = loadJSON(TUNING_PATH, {});
-let stundenStats   = {};   // { name: { hour: { wins, losses } } }
+const TUNING_PATH   = path.join(DATA_DIR, 'tuning.json');
+const STUNDEN_PATH  = path.join(DATA_DIR, 'stunden.json');  // FIX 4: Persistenz-Pfad
+let tuningHistory   = loadJSON(TUNING_PATH, {});
+let stundenStats    = loadJSON(STUNDEN_PATH, {});  // FIX 4: Beim Start aus Datei laden
+
+// FIX 1: Pending Features für PnL-Feedback Loop
+// Speichert Feature-Objekte ausgeführter Trades bis der PnL bekannt ist
+const pendingFeatures = {};
 
 // AutoTune Schwellen
 const TUNING = {
@@ -238,6 +243,7 @@ function trackStunde(name, pnl) {
   if (!stundenStats[name][h]) stundenStats[name][h] = { wins: 0, losses: 0 };
   if (pnl > 0) stundenStats[name][h].wins++;
   else stundenStats[name][h].losses++;
+  saveJSON(STUNDEN_PATH, stundenStats);  // FIX 4: Nach jeder Aktualisierung persistieren
 }
 
 function istSchlechteStunde(name) {
@@ -345,16 +351,48 @@ function berechneKonsek(name) {
   return k;
 }
 
-function logFeature(name, side, equity, rrr, ausgefuehrt, grund = null) {
+// FIX 1 + FIX 3: logFeature mit PnL-Feedback Loop und erweiterten Features
+// extras = { offer, bid, entry, slF, tpF } — alle optional, aus dem Markt-Snapshot
+function logFeature(name, side, equity, rrr, ausgefuehrt, grund = null, extras = {}) {
   try {
+    const s    = SETTINGS[name] || {};
+    const hour = new Date().getHours();
+    const { offer = null, bid = null, entry = null, slF = null, tpF = null } = extras;
+
     const feature = {
       ts: Date.now(), strategie: name, side, equity,
-      hour: new Date().getHours(), weekday: new Date().getDay(),
-      recentWR5: berechneWR(name, 5), recentWR15: berechneWR(name, 15),
-      konsek: berechneKonsek(name), rrr: rrr || null,
-      ausgefuehrt, grund
+      hour, weekday: new Date().getDay(),
+      recentWR5:  berechneWR(name, 5),
+      recentWR15: berechneWR(name, 15),
+      konsek:     berechneKonsek(name),
+      rrr:        rrr || null,
+      ausgefuehrt,
+      grund,
+      // FIX 3: Neue Features für besseres ML-Training
+      slDistPct:      (entry != null && slF != null && entry > 0)
+                        ? parseFloat((Math.abs(entry - slF) / entry * 100).toFixed(3))
+                        : null,
+      rewardPct:      (entry != null && tpF != null && entry > 0)
+                        ? parseFloat((Math.abs(tpF - entry) / entry * 100).toFixed(3))
+                        : null,
+      spread:         (offer != null && bid != null)
+                        ? parseFloat((offer - bid).toFixed(5))
+                        : null,
+      sessionLondon:  (hour >= 8  && hour < 12) ? 1 : 0,
+      sessionOverlap: (hour >= 13 && hour < 17) ? 1 : 0,
+      drawdownPct:    s.startEquity > 0
+                        ? parseFloat(((s.startEquity - equity) / s.startEquity * 100).toFixed(2))
+                        : 0,
     };
-    fs.appendFileSync(FEATURES_PATH, JSON.stringify(feature) + '\n');
+
+    if (ausgefuehrt) {
+      // FIX 1: Trade ausgeführt → in pendingFeatures merken, PnL kommt beim nächsten Webhook
+      pendingFeatures[name] = feature;
+    } else {
+      // FIX 1: Skip/Filter → sofort mit pnl: null in Datei schreiben
+      feature.pnl = null;
+      fs.appendFileSync(FEATURES_PATH, JSON.stringify(feature) + '\n');
+    }
   } catch {}
 }
 
@@ -386,16 +424,15 @@ async function handleWebhook(req, res, name) {
     const tagesPct = ((equity - tagesStart[name]) / tagesStart[name]) * 100;
 
     if (tagesPct >= s.tagsStopPct) {
-      await tg(`🎯 Tagesziel +${s.tagsStopPct}% erreicht — ${name} pausiert`);
       return res.json({ status: 'pausiert', grund: 'Tagesziel' });
     }
     if (s.tagsVerlustPct && tagesPct <= -s.tagsVerlustPct) {
-      await tg(`🛑 ${name} Tagesverlust-Stop -${s.tagsVerlustPct}%`);
+      await tg(`\u{1F6D1} ${name} Tagesverlust-Stop -${s.tagsVerlustPct}%`);
       return res.json({ status: 'pausiert', grund: 'Tagesverlust-Stop' });
     }
     const drawdown = ((s.startEquity - equity) / s.startEquity) * 100;
     if (performance[name].trades > 0 && drawdown >= s.maxDrawdownPct) {
-      await tg(`🛑 <b>${name}</b> gestoppt — Max. Drawdown erreicht`);
+      await tg(`\u{1F6D1} <b>${name}</b> gestoppt — Max. Drawdown erreicht`);
       return res.json({ status: 'gestoppt', grund: 'Max. Drawdown' });
     }
 
@@ -421,7 +458,13 @@ async function handleWebhook(req, res, name) {
       if (pnl !== 0) {
         updatePerf(name, pnl);
         addTrade(name, { datum: new Date().toISOString(), pnl, equity, side });
-        addLog('info', `📝 [${name}] PnL ${pnl >= 0 ? '+' : ''}${pnl}€`);
+        addLog('info', `\u{1F4DD} [${name}] PnL ${pnl >= 0 ? '+' : ''}${pnl}€`);
+        // FIX 1: PnL-Feedback Loop — pending Feature mit Outcome abschließen und in features.jsonl schreiben
+        if (pendingFeatures[name]) {
+          const completed = { ...pendingFeatures[name], pnl };
+          fs.appendFileSync(FEATURES_PATH, JSON.stringify(completed) + '\n');
+          delete pendingFeatures[name];
+        }
         await autoTune(name);  // Nach jedem Trade: Selbst-Anpassung prüfen
       }
     }
@@ -431,39 +474,49 @@ async function handleWebhook(req, res, name) {
     // RRR prüfen
     let slF = parseFloat(sl), tpF = parseFloat(tp);
     const minRRR = (s.regimeFilter && regimeModus === 'VORSICHTIG') ? 3.5 : s.minRRR;
+    // FIX 2: entry, offer, bid außerhalb des try-Blocks deklarieren
+    let entry = null, offer = null, bid = null;
     try {
       const mkt = await axios.get(`${BASE_URL}/markets/GOLD`, { headers: headers(name) });
-      const entry = side === 'BUY' ? mkt.data.snapshot.offer : mkt.data.snapshot.bid;
+      offer = mkt.data.snapshot.offer;
+      bid   = mkt.data.snapshot.bid;
+      entry = side === 'BUY' ? offer : bid;
       const riskD = Math.abs(entry - slF), rewardD = Math.abs(tpF - entry);
       if (riskD > 0 && rewardD / riskD < minRRR) {
         tpF = side === 'BUY' ? entry + riskD * minRRR : entry - riskD * minRRR;
         tpF = parseFloat(tpF.toFixed(2));
-        addLog('info', `📐 [${name}] RRR angepasst: TP → ${tpF}`);
+        addLog('info', `\u{1F4D0} [${name}] RRR angepasst: TP → ${tpF}`);
       }
     } catch {}
 
-    // ── ML-Filter ─────────────────────────────────────
-    const rrr = slF && tpF ? parseFloat((Math.abs(tpF - slF) / (slDist || 1)).toFixed(2)) : 2.0;
+    // FIX 2: RRR korrekt berechnen (entry→sl = Risiko, entry→tp = Reward)
+    const slDist     = entry != null ? Math.abs(entry - slF) : Math.abs(tpF - slF);
+    const rewardDist = entry != null ? Math.abs(tpF - entry) : Math.abs(tpF - slF);
+    const rrr = slDist > 0 ? parseFloat((rewardDist / slDist).toFixed(2)) : 2.0;
+    const extras = { offer, bid, entry, slF, tpF };
+
+    // ── ML-Filter ─────────────────────────────────────────────────
     const ml  = await mlPredict(name, side, equity, rrr);
-    addLog('info', `🤖 [${name}] ML: ${ml.empfehlung} (${ml.konfidenz ? (ml.konfidenz*100).toFixed(0)+'%' : 'kein Modell'}) — ${ml.grund}`);
+    addLog('info', `\u{1F916} [${name}] ML: ${ml.empfehlung} (${ml.konfidenz ? (ml.konfidenz*100).toFixed(0)+'%' : 'kein Modell'}) — ${ml.grund}`);
     if (ml.empfehlung === 'skip') {
-      logFeature(name, side, equity, rrr, false, `ML: ${ml.grund}`);
+      logFeature(name, side, equity, rrr, false, `ML: ${ml.grund}`, extras);
       broadcast('ml_skip', { name, side, konfidenz: ml.konfidenz, grund: ml.grund });
       return res.json({ status: 'übersprungen', grund: ml.grund, ml });
     }
 
     await closePositions(name, 'GOLD');
 
-    const riskCapital = equity * (s.riskPct / 100);
-    const slDist = Math.abs(tpF - slF);
+    // Konfidenz-basiertes Sizing: ML gibt sizing_faktor zurück (0.5 / 1.0 / 1.5)
+    const sizingFaktor = ml.sizing_faktor != null ? ml.sizing_faktor : 1.0;
+    const riskCapital = equity * (s.riskPct / 100) * sizingFaktor;
     const size = slDist > 0 ? Math.max(1, parseFloat((riskCapital / slDist).toFixed(1))) : 1;
 
     const order = { epic: 'GOLD', direction: side, size, guaranteedStop: false, stopLevel: slF, profitLevel: tpF };
-    addLog('info', `📤 [${name}] Order: ${JSON.stringify(order)}`);
+    addLog('info', `\u{1F4E4} [${name}] Order: ${JSON.stringify(order)}`);
     await placeOrder(name, order);
 
-    logFeature(name, side, equity, rrr, true);
-    await tg(`${side === 'BUY' ? '🟢' : '🔴'} <b>${side === 'BUY' ? 'LONG' : 'SHORT'}</b> — <b>${name}</b>\nSize: ${size} | SL: ${slF} | TP: ${tpF}${ml.trainiert ? ` | ML: ${(ml.konfidenz*100).toFixed(0)}%` : ''}`);
+    logFeature(name, side, equity, rrr, true, null, extras);
+    await tg(`${side === 'BUY' ? '\u{1F7E2}' : '\u{1F534}'} <b>${side === 'BUY' ? 'LONG' : 'SHORT'}</b> — <b>${name}</b>\nSize: ${size} | SL: ${slF} | TP: ${tpF}${ml.trainiert ? ` | ML: ${(ml.konfidenz*100).toFixed(0)}%` : ''}`);
     broadcast('trade', { name, side, size, sl: slF, tp: tpF, equity });
     res.json({ status: 'ok', name, size, sl: slF, tp: tpF });
 
@@ -477,13 +530,13 @@ async function handleWebhook(req, res, name) {
   }
 }
 
-// ── Webhook Routen ────────────────────────────────────
+// ── Webhook Routen ─────────────────────────────────────────────────
 ['mittel','aggressiv','smart','konservativ','optimiert','test','adaptive','steady'].forEach(n => {
   app.post(`/webhook/${n}`, (req, res) => handleWebhook(req, res, n));
 });
 app.post('/webhook/goldglobe', (req, res) => handleWebhook(req, res, 'smart'));
 
-// ── SL Update ─────────────────────────────────────────
+// ── SL Update ─────────────────────────────────────────────────────
 app.post('/webhook/update_sl/:name', async (req, res) => {
   const { name } = req.params;
   const { sl } = req.body;
@@ -498,7 +551,7 @@ app.post('/webhook/update_sl/:name', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── Settings API ──────────────────────────────────────
+// ── Settings API ──────────────────────────────────────────────────
 app.get('/api/settings', (req, res) => res.json(SETTINGS));
 
 app.post('/api/settings/:name', (req, res) => {
@@ -512,7 +565,7 @@ app.post('/api/settings/:name', (req, res) => {
   res.json({ status: 'ok', settings: SETTINGS[name] });
 });
 
-// ── Performance API ───────────────────────────────────
+// ── Performance API ───────────────────────────────────────────────
 app.get('/api/performance', async (req, res) => {
   const result = {};
   for (const name of Object.keys(KONTEN)) {
@@ -529,7 +582,7 @@ app.get('/api/equity', (req, res) => res.json(equityHistory));
 app.get('/api/trades', (req, res) => res.json(tradeHistory));
 app.get('/api/trades/:name', (req, res) => res.json(tradeHistory[req.params.name] || []));
 
-// ── Positionen API ────────────────────────────────────
+// ── Positionen API ──────────────────────────────────────────────────
 app.get('/api/positions', async (req, res) => {
   const result = {};
   for (const name of Object.keys(KONTEN)) {
@@ -541,18 +594,18 @@ app.get('/api/positions', async (req, res) => {
   res.json(result);
 });
 
-// ── Smart Status & Reset ──────────────────────────────
+// ── Smart Status & Reset ────────────────────────────────────────────────
 app.get('/api/smart-status', (req, res) => res.json({ ...SMART, schwellen: { pause: WR_PAUSE * 100, vorsichtig: WR_VORSICHTIG * 100, konsekMax: KONSE_MAX } }));
 
 app.post('/api/smart/reset', async (req, res) => {
   const alt = SMART.modus;
   SMART.modus = 'AKTIV'; SMART.pauseBis = null; SMART.konsekVerluste = 0; SMART.geaendertAm = new Date().toISOString();
-  await tg(`🔄 [Smart] Regime manuell zurückgesetzt: ${alt} → AKTIV`);
+  await tg(`\u{1F504} [Smart] Regime manuell zurückgesetzt: ${alt} → AKTIV`);
   broadcast('regime', SMART);
   res.json({ status: 'ok', alt, neu: 'AKTIV' });
 });
 
-// ── ML API ────────────────────────────────────────────
+// ── ML API ─────────────────────────────────────────────────────────────────
 app.get('/api/ml-status', async (req, res) => {
   await aktualisiereMlStatus();
   res.json({ url: ML_URL, status: mlStatus });
@@ -568,49 +621,23 @@ app.post('/api/ml-train', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── AutoTune API ──────────────────────────────────────
+// ── AutoTune & Stunden API ───────────────────────────────────────────────
 app.get('/api/tuning', (req, res) => res.json(tuningHistory));
-
-app.get('/api/stunden', (req, res) => {
-  // Stunden-Statistik mit WR anreichern
-  const result = {};
-  for (const [name, stunden] of Object.entries(stundenStats)) {
-    result[name] = {};
-    for (const [h, st] of Object.entries(stunden)) {
-      const total = st.wins + st.losses;
-      result[name][h] = { ...st, total, wr: total > 0 ? parseFloat(((st.wins/total)*100).toFixed(1)) : null };
-    }
-  }
-  res.json(result);
-});
+app.get('/api/stunden', (req, res) => res.json(stundenStats));
+app.get('/api/logs', (req, res) => res.json(logs));
 
 app.post('/api/tuning/reset/:name', (req, res) => {
   const { name } = req.params;
-  if (!SETTINGS[name]) return res.status(404).json({ error: 'Strategie nicht gefunden' });
+  if (!SETTINGS[name]) return res.status(404).json({ error: 'Nicht gefunden' });
   SETTINGS[name].riskPct = SETTINGS_ORIGINAL[name].riskPct;
   saveSettings();
   broadcast('settings', { name, settings: SETTINGS[name] });
-  addLog('tuning', `🔄 [${name}] Risk manuell zurückgesetzt auf ${SETTINGS_ORIGINAL[name].riskPct}%`);
+  addLog('tuning', `\u{1F504} [${name}] AutoTune manuell zurückgesetzt`);
   res.json({ status: 'ok', riskPct: SETTINGS[name].riskPct });
 });
 
-// ── Logs API ──────────────────────────────────────────
-app.get('/api/logs', (req, res) => res.json(logs));
+// ── Health ─────────────────────────────────────────────────────────────────────
+app.get('/health', (req, res) => res.json({ status: 'ok', strategies: Object.keys(KONTEN).length }));
 
-// ── Health ────────────────────────────────────────────
-app.get('/health', (req, res) => res.json({ status: 'ok', strategies: Object.keys(SETTINGS).length }));
-
-// ── WebSocket ─────────────────────────────────────────
-wss.on('connection', (ws) => {
-  ws.send(JSON.stringify({ type: 'init', data: { settings: SETTINGS, performance, logs: logs.slice(0, 50), regime: SMART } }));
-});
-
-// ── Tages-Reset (Mitternacht) ─────────────────────────
-function scheduleDailyReset() {
-  const now = new Date();
-  const next = new Date(now); next.setHours(0, 0, 0, 0); next.setDate(next.getDate() + 1);
-  setTimeout(() => { tagesStart = {}; addLog('info', '🌅 Tages-Reset'); scheduleDailyReset(); }, next - now);
-}
-scheduleDailyReset();
-
-server.listen(PORT, () => addLog('info', `🚀 Master Bot läuft auf Port ${PORT}`));
+// ── Server starten ────────────────────────────────────────────────────────
+server.liste
