@@ -88,13 +88,16 @@ const SMART = { modus: 'AKTIV', pauseBis: null, geaendertAm: null, rollendeWR: n
 const WR_PAUSE = 0.35, WR_VORSICHTIG = 0.42, KONSE_MAX = 4, PAUSE_MS = 2 * 60 * 60 * 1000;
 
 // ── Market Mode Konfiguration ─────────────────────────────────────────
-// sizingFaktor: multipliziert ML-Sizing (z.B. 0.7 × 1.0× ML = 0.7× Position)
+// sizingFaktor:    multipliziert ML-Sizing (z.B. 0.7 × 1.0× ML = 0.7× Position)
+// konfidenzAdjust: verschiebt den ML-Schwellwert (positiv = strenger, negativ = lockerer)
+const BASIS_KONFIDENZ = parseFloat(process.env.PREDICT_CONF || '0.62');
+
 const MARKET_MODES = {
-  PANIC:    { emoji: '🆘', sizingFaktor: 0.0 },  // Kein Trading — zu gefährlich
-  HIGH_VOL: { emoji: '⚡', sizingFaktor: 0.7 },  // Erhöhte Volatilität — kleiner
-  BEAR:     { emoji: '🐻', sizingFaktor: 0.8 },  // Bärenmarkt — vorsichtig
-  SIDEWAYS: { emoji: '➡️', sizingFaktor: 1.0 },  // Seitwärtstrend — normal
-  BULL:     { emoji: '🐂', sizingFaktor: 1.2 },  // Bullenmarkt — aggressiver
+  PANIC:    { emoji: '🆘', sizingFaktor: 0.0, konfidenzAdjust: +0.10 },  // blockiert (PANIC = kein Trading)
+  HIGH_VOL: { emoji: '⚡', sizingFaktor: 0.7, konfidenzAdjust: +0.06 },  // 0.62 + 0.06 = 0.68 (strenger)
+  BEAR:     { emoji: '🐻', sizingFaktor: 0.8, konfidenzAdjust: +0.03 },  // 0.62 + 0.03 = 0.65 (vorsichtiger)
+  SIDEWAYS: { emoji: '➡️', sizingFaktor: 1.0, konfidenzAdjust:  0.00 },  // 0.62       = normal
+  BULL:     { emoji: '🐂', sizingFaktor: 1.2, konfidenzAdjust: -0.04 },  // 0.62 - 0.04 = 0.58 (aggressiver)
 };
 
 function buildDefaultPerf() {
@@ -335,6 +338,7 @@ async function mlPredict(name, side, equity, rrr) {
       recentWR5:  f5.length  ? parseFloat(((f5.filter(t=>t.pnl>0).length/f5.length)*100).toFixed(1))  : null,
       recentWR15: f15.length ? parseFloat(((f15.filter(t=>t.pnl>0).length/f15.length)*100).toFixed(1)) : null,
       konsek:     berechneKonsek(name),
+      threshold:  getKonfidenzSchwelle(),  // Dynamischer Schwellwert je nach Market Mode
     }, { timeout: 3000 });
     return res.data;
   } catch (err) {
@@ -516,6 +520,11 @@ function getMarktSizingFaktor() {
   return MARKET_MODES[marketMode.modus]?.sizingFaktor ?? 1.0;
 }
 
+function getKonfidenzSchwelle() {
+  const adj = MARKET_MODES[marketMode.modus]?.konfidenzAdjust ?? 0;
+  return parseFloat(Math.min(0.95, Math.max(0.50, BASIS_KONFIDENZ + adj)).toFixed(2));
+}
+
 // ── Webhook Handler ───────────────────────────────────
 async function handleWebhook(req, res, name) {
   const s = SETTINGS[name];
@@ -632,6 +641,20 @@ async function handleWebhook(req, res, name) {
       logFeature(name, side, equity, rrr, false, `ML: ${ml.grund}`, extras);
       broadcast('ml_skip', { name, side, konfidenz: ml.konfidenz, grund: ml.grund });
       return res.json({ status: 'übersprungen', grund: ml.grund, ml });
+    }
+
+    // ── Dynamischer Konfidenz-Schwellwert (Market Mode Override) ──────────
+    // Falls ml-service die Schwelle nicht angewendet hat (kein trainiertes Modell),
+    // prüfen wir hier nochmal lokal anhand der rohen Konfidenz
+    if (ml.trainiert && ml.konfidenz != null) {
+      const schwelle = getKonfidenzSchwelle();
+      if (ml.konfidenz < schwelle) {
+        const msg = `Konfidenz ${(ml.konfidenz*100).toFixed(0)}% < ${marketMode.modus}-Schwelle ${(schwelle*100).toFixed(0)}%`;
+        addLog('info', `📊 [${name}] Market Override: ${msg}`);
+        logFeature(name, side, equity, rrr, false, `MarketOverride: ${msg}`, extras);
+        broadcast('ml_skip', { name, side, konfidenz: ml.konfidenz, grund: msg, marketModus: marketMode.modus });
+        return res.json({ status: 'übersprungen', grund: msg, schwelle, marketModus: marketMode.modus, ml });
+      }
     }
 
     await closePositions(name, 'GOLD');
@@ -833,6 +856,17 @@ app.get('/api/backtest/signals', (req, res) => {
     res.json({ signale: signale.length, erste: signale[0]?.ts, letzte: signale[signale.length-1]?.ts, daten: signale.slice(-50) });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+// ── Konfidenz-Schwellwert API ──────────────────────────────────────────────────
+app.get('/api/confidence-threshold', (req, res) => res.json({
+  basis:        BASIS_KONFIDENZ,
+  aktuell:      getKonfidenzSchwelle(),
+  marketModus:  marketMode.modus,
+  adjust:       MARKET_MODES[marketMode.modus]?.konfidenzAdjust ?? 0,
+  alle: Object.fromEntries(
+    Object.entries(MARKET_MODES).map(([m, cfg]) => [m, parseFloat((BASIS_KONFIDENZ + cfg.konfidenzAdjust).toFixed(2))])
+  ),
+}));
 
 // ── Market Mode API ────────────────────────────────────────────────────────────
 app.get('/api/market-mode', (req, res) => res.json({ ...marketMode, config: MARKET_MODES }));
