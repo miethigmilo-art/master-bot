@@ -1559,7 +1559,7 @@ app.get('/api/state', (req, res) => {
 
     res.json({
       ts:          new Date().toISOString(),
-      marketMode:  marketMode,
+      marketMode:  marketMode.modus,
       strategies:  stateByStrategy,
       circuits:    Object.fromEntries(Object.entries(breakers).map(([k, v]) => [k, v.status()])),
       dedup:       dedup.status(),
