@@ -1771,6 +1771,16 @@ app.delete('/api/broker/sandbox-orders', (req, res) => {
   res.json({ ok: true });
 });
 
+
+// ── Health Check ─────────────────────────────────────────────────────────────
+app.get('/health', (req, res) => res.json({
+  status:      'ok',
+  strategies:  STRATEGY_IDS.length,
+  marketMode:  marketMode.modus,
+  db:          db.available ? 'postgresql' : 'json-fallback',
+  scorePaused: Object.values(scorePauses).filter(s => s.paused).length,
+}));
+
 async function startServer() {
   if (db.available) {
     try {
