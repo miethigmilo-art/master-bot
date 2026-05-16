@@ -1595,6 +1595,11 @@ app.post('/api/recovery/reconcile', async (req, res) => {
 });
 
 // ── Health ─────────────────────────────────────────────────────────────────────────────────────────
+// ── Explicit root fallback (belt-and-suspenders for express.static) ─────────
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 app.get('/health', (req, res) => res.json({
   status:      'ok',
   strategies:  Object.keys(KONTEN).length,
