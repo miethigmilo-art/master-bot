@@ -50,5 +50,4 @@ Write-Host "`nNaechste Schritte:" -ForegroundColor Yellow
 Write-Host "1. Railway.app -> New Project -> Deploy from GitHub -> master-bot"
 Write-Host "2. Alle Env-Variablen aus .env.example in Railway eintragen"
 Write-Host "3. Railway deployed automatisch!"
-Write-Host "`nDruecke Enter zum Schliessen..."
-Read-Host
+Write

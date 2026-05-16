@@ -1,607 +1,1554 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en" data-vibe="fintech" data-mode="dark">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>Master Bot Dashboard</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <style>
-*{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#0a0a0f;--card:#12121a;--border:#1e1e2e;--text:#e0e0f0;--muted:#555570;--gold:#f59e0b;--green:#22c55e;--red:#ef4444;--blue:#3b82f6;--purple:#8b5cf6}
-body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;display:flex;flex-direction:column}
-/* Header */
-header{background:var(--card);border-bottom:1px solid var(--border);padding:0 24px;height:56px;display:flex;align-items:center;gap:16px;position:sticky;top:0;z-index:100}
-.logo{font-size:18px;font-weight:700;color:var(--gold);letter-spacing:-.5px}
-.logo span{color:var(--text);font-weight:400}
-.conn-bar{display:flex;align-items:center;gap:8px;margin-left:auto}
-.conn-bar input{background:#0f0f1a;border:1px solid var(--border);color:var(--text);padding:6px 12px;border-radius:8px;font-size:12px;width:360px}
-.btn{padding:6px 14px;border-radius:8px;border:none;cursor:pointer;font-size:12px;font-weight:600;transition:.15s}
-.btn-gold{background:var(--gold);color:#000}.btn-gold:hover{opacity:.85}
-.btn-dark{background:var(--border);color:var(--text)}.btn-dark:hover{background:#2e2e40}
-.btn-red{background:var(--red);color:#fff}.btn-sm{padding:4px 10px;font-size:11px}
-.dot{width:8px;height:8px;border-radius:50%;background:#555}
-.dot.ok{background:var(--green);box-shadow:0 0 6px var(--green)}
-.dot.err{background:var(--red)}
-/* Nav */
-nav{background:var(--card);border-bottom:1px solid var(--border);padding:0 24px;display:flex;gap:2px}
-.nav-tab{padding:12px 16px;color:var(--muted);font-size:13px;cursor:pointer;border-bottom:2px solid transparent;transition:.15s}
-.nav-tab:hover{color:var(--text)}
-.nav-tab.active{color:var(--gold);border-bottom-color:var(--gold)}
-/* Layout */
-main{flex:1;padding:24px;max-width:1400px;margin:0 auto;width:100%}
-.page{display:none}.page.active{display:block}
-/* Cards */
-.grid{display:grid;gap:16px}
-.grid-4{grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}
-.grid-2{grid-template-columns:repeat(auto-fill,minmax(420px,1fr))}
-.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px}
-.card h3{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:12px}
-.big-val{font-size:28px;font-weight:700}
-.sub-val{font-size:12px;color:var(--muted);margin-top:4px}
-.pos{color:var(--green)}.neg{color:var(--red)}.gold{color:var(--gold)}
-/* Strategy Cards */
-.strat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:16px;margin-top:20px}
-.strat-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px}
-.strat-header{display:flex;align-items:center;gap:10px;margin-bottom:16px}
-.strat-name{font-size:15px;font-weight:700;flex:1}
-.toggle{width:44px;height:24px;border-radius:12px;background:#333;position:relative;cursor:pointer;transition:.2s;border:none;flex-shrink:0}
-.toggle.on{background:var(--green)}
-.toggle::after{content:'';position:absolute;width:18px;height:18px;border-radius:50%;background:#fff;top:3px;left:3px;transition:.2s}
-.toggle.on::after{left:23px}
-.regime-badge{padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700}
-.regime-AKTIV{background:#1a3a1a;color:var(--green)}
-.regime-VORSICHTIG{background:#3a3a1a;color:#fbbf24}
-.regime-PAUSE{background:#3a1a1a;color:var(--red)}
-.strat-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
-.stat-box{background:#0f0f1a;border-radius:8px;padding:10px;text-align:center}
-.stat-box .v{font-size:16px;font-weight:700}
-.stat-box .l{font-size:10px;color:var(--muted);margin-top:2px}
-.chart-mini{height:80px}
-.strat-actions{display:flex;gap:8px;margin-top:14px}
-/* Settings Modal */
-.modal-bg{position:fixed;inset:0;background:#000a;display:flex;align-items:center;justify-content:center;z-index:200;display:none}
-.modal-bg.open{display:flex}
-.modal{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:28px;width:480px;max-width:95vw;max-height:90vh;overflow-y:auto}
-.modal h2{font-size:18px;font-weight:700;margin-bottom:20px}
-.field{margin-bottom:16px}
-.field label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px;font-weight:600}
-.field input[type=number],.field input[type=text]{width:100%;background:#0f0f1a;border:1px solid var(--border);color:var(--text);padding:10px 14px;border-radius:8px;font-size:14px}
-.field input:focus{outline:none;border-color:var(--gold)}
-.field-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.modal-actions{display:flex;gap:8px;margin-top:20px;justify-content:flex-end}
+:root{--bg:#0a0d12;--bg-elev:#0f1419;--bg-elev2:#141a22;--panel:#0f1419;--line:rgba(255,255,255,0.06);--line-strong:rgba(255,255,255,0.12);--text:#e6e9ef;--text-dim:#8b94a3;--text-faint:#5a6373;--accent:#22d3ee;--pos:#22c55e;--neg:#ef4444;--warn:#f59e0b;--grid:rgba(255,255,255,0.04);--sidebar-w:228px;--radius:10px;--radius-sm:6px;--pad:20px;--font-mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--font-sans:'Inter',ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;--font-display:'Inter',ui-sans-serif,system-ui,sans-serif;--shadow-card:0 1px 0 rgba(255,255,255,0.02) inset,0 1px 2px rgba(0,0,0,0.4);--card-bg:var(--bg-elev)}
+:root[data-mode="light"]{--bg:#f7f8fa;--bg-elev:#ffffff;--bg-elev2:#fbfbfd;--panel:#ffffff;--line:rgba(10,14,22,0.06);--line-strong:rgba(10,14,22,0.12);--text:#0f172a;--text-dim:#64748b;--text-faint:#94a3b8;--grid:rgba(10,14,22,0.04);--shadow-card:0 1px 2px rgba(15,23,42,0.04),0 0 0 1px rgba(15,23,42,0.04);--card-bg:#ffffff}
+:root[data-vibe="terminal"]{--radius:0;--radius-sm:0;--font-sans:'JetBrains Mono','IBM Plex Mono',ui-monospace,monospace;--font-display:'JetBrains Mono','IBM Plex Mono',ui-monospace,monospace;--shadow-card:none;--card-bg:transparent}
+:root[data-vibe="terminal"][data-mode="dark"]{--bg:#050200;--bg-elev:#080500;--bg-elev2:#0d0900;--panel:#080500;--line:rgba(255,176,32,0.22);--line-strong:rgba(255,176,32,0.55);--text:#ffb020;--text-dim:#cf8a14;--text-faint:#7a5108;--accent:#ff9000;--pos:#b6ff5b;--neg:#ff3838;--warn:#ffd84d;--grid:rgba(255,176,32,0.10)}
+:root[data-vibe="cyber"][data-mode="dark"]{--bg:#07050d;--bg-elev:#0d0820;--bg-elev2:#15102c;--panel:#0d0820;--line:rgba(217,70,239,0.18);--line-strong:rgba(217,70,239,0.45);--text:#f5f3ff;--text-dim:#a78bfa;--text-faint:#6d28d9;--accent:#ec4899;--pos:#14f195;--neg:#ff2d55;--warn:#fde047;--grid:rgba(217,70,239,0.06);--shadow-card:0 0 0 1px rgba(217,70,239,0.18),0 0 24px rgba(217,70,239,0.06);--card-bg:linear-gradient(180deg,rgba(217,70,239,0.04),rgba(34,211,238,0.02))}
+:root[data-vibe="mono"][data-mode="dark"]{--bg:#000000;--bg-elev:#0a0a0a;--bg-elev2:#111111;--panel:#0a0a0a;--line:rgba(255,255,255,0.1);--line-strong:rgba(255,255,255,0.22);--text:#ffffff;--text-dim:#999999;--text-faint:#555555;--accent:#ffffff;--pos:#ffffff;--neg:#888888;--warn:#ffffff;--grid:rgba(255,255,255,0.05);--shadow-card:none;--card-bg:var(--bg-elev)}
+:root[data-vibe="fintech"][data-mode="dark"]{--bg:#0a0d12;--bg-elev:#11161e;--bg-elev2:#161c26;--panel:#11161e;--line:rgba(255,255,255,0.06);--line-strong:rgba(255,255,255,0.14);--text:#f1f5f9;--text-dim:#94a3b8;--text-faint:#64748b;--accent:#6366f1;--pos:#22c55e;--neg:#ef4444;--shadow-card:0 1px 0 rgba(255,255,255,0.02) inset,0 1px 2px rgba(0,0,0,0.4)}
+:root[data-vibe="fintech"][data-mode="light"]{--bg:#f6f7fb;--bg-elev:#ffffff;--bg-elev2:#f9fafc;--panel:#ffffff;--line:rgba(15,23,42,0.06);--line-strong:rgba(15,23,42,0.14);--text:#0f172a;--text-dim:#475569;--text-faint:#94a3b8;--accent:#4f46e5;--pos:#16a34a;--neg:#dc2626}
+:root[data-density="compact"]{--pad:14px}:root[data-density="comfy"]{--pad:26px}
+*{box-sizing:border-box}html,body,#root{height:100%}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font-sans);font-size:13px;line-height:1.45;letter-spacing:-.005em;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+:root[data-vibe="terminal"] body{font-family:var(--font-mono);font-size:12px;letter-spacing:0}
+.app{display:grid;grid-template-columns:var(--sidebar-w) 1fr;height:100vh;background:var(--bg)}
+.sidebar{background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:18px 12px;gap:4px;overflow-y:auto}
+.main{overflow-y:auto;overflow-x:hidden}
+.main-inner{padding:var(--pad);display:flex;flex-direction:column;gap:var(--pad);max-width:1600px;margin:0 auto}
+.sb-brand{display:flex;align-items:center;gap:10px;padding:8px 10px 18px}
+.sb-logo{width:28px;height:28px;border-radius:7px;background:var(--accent);display:grid;place-items:center;color:var(--bg);font-weight:700;font-size:14px;flex-shrink:0}
+:root[data-vibe="terminal"] .sb-logo{border-radius:0}
+.sb-brand-name{font-weight:600;font-size:14px;letter-spacing:-.02em}
+.sb-brand-sub{font-size:10px;color:var(--text-faint);letter-spacing:.04em;text-transform:uppercase}
+.sb-section-label{font-size:10px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--text-faint);padding:14px 12px 4px}
+.sb-nav{display:flex;flex-direction:column;gap:1px}
+.sb-item{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:var(--radius-sm);color:var(--text-dim);cursor:pointer;font-size:13px;font-weight:500;transition:background .1s,color .1s;position:relative;white-space:nowrap;min-width:0;appearance:none;border:0;width:100%;text-align:left;font-family:inherit;background:transparent}
+.sb-item>span:not(.sb-item-badge){flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.sb-item:hover{color:var(--text);background:var(--bg-elev2)}
+.sb-item.active{color:var(--text);background:var(--bg-elev2)}
+:root[data-vibe="terminal"] .sb-item.active{background:transparent;border-left:2px solid var(--accent);padding-left:8px;color:var(--accent)}
+.sb-item svg{width:16px;height:16px;opacity:.9;flex-shrink:0}
+.sb-item-badge{margin-left:auto;background:var(--accent);color:var(--bg);font-size:10px;font-weight:700;padding:1px 6px;border-radius:999px;letter-spacing:0}
+.sb-foot{margin-top:auto;padding:12px 10px;border-top:1px solid var(--line)}
+.sb-bot-status{display:flex;align-items:center;gap:8px;font-size:11px;margin-bottom:6px}
+.sb-bot-dot{width:8px;height:8px;border-radius:50%;background:var(--pos);position:relative;flex-shrink:0}
+.sb-bot-dot.off{background:var(--text-faint)}
+.sb-bot-dot.warn{background:var(--warn)}
+.sb-bot-dot::after{content:'';position:absolute;inset:-3px;border-radius:50%;background:var(--pos);opacity:.3;animation:pulse 2s ease-out infinite}
+.sb-bot-dot.off::after,.sb-bot-dot.warn::after{display:none}
+@keyframes pulse{0%{transform:scale(1);opacity:.4}100%{transform:scale(2.4);opacity:0}}
+.sb-bot-status-text{color:var(--text);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sb-bot-meta{font-size:10px;color:var(--text-faint);padding-left:16px;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.topbar>div:first-child{min-width:0;flex:1 1 auto}
+.topbar h1{margin:0;font-size:22px;font-weight:600;letter-spacing:-.02em;font-family:var(--font-display)}
+:root[data-vibe="terminal"] .topbar h1{font-weight:700;text-transform:uppercase}
+.topbar-sub{color:var(--text-dim);font-size:12px;margin-top:2px}
+.topbar-right{display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap}
+.tb-time{font-family:var(--font-mono);font-size:12px;color:var(--text-dim);font-variant-numeric:tabular-nums}
+.tb-btn{height:32px;padding:0 12px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--bg-elev);color:var(--text);font:inherit;font-size:12px;font-weight:500;display:inline-flex;align-items:center;gap:6px;cursor:pointer;transition:background .1s,border-color .1s;white-space:nowrap;flex-shrink:0}
+.tb-btn:hover{background:var(--bg-elev2);border-color:var(--line-strong)}
+.tb-btn:disabled{opacity:.4;cursor:not-allowed}
+.tb-btn svg{width:14px;height:14px}
+:root[data-vibe="terminal"] .tb-btn{border-radius:0;text-transform:uppercase;letter-spacing:.05em}
+.card{background:var(--card-bg);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;display:flex;flex-direction:column;gap:10px;box-shadow:var(--shadow-card)}
+:root[data-vibe="terminal"] .card{border-color:var(--line);padding:10px 12px}
+.card-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.card-title{font-size:12px;font-weight:600;color:var(--text-dim);letter-spacing:.04em;text-transform:uppercase}
+:root[data-vibe="terminal"] .card-title{color:var(--accent)}
+.card-action{font-size:11px;color:var(--text-dim);cursor:pointer}
+.card-action:hover{color:var(--text)}
+.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--pad)}
+.kpi{background:var(--card-bg);border:1px solid var(--line);border-radius:var(--radius);padding:16px 18px;box-shadow:var(--shadow-card);display:flex;flex-direction:column;gap:4px;position:relative;overflow:hidden}
+:root[data-vibe="terminal"] .kpi{padding:10px 12px}
+.kpi-label{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:500;color:var(--text-dim);letter-spacing:.03em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpi-label svg{width:12px;height:12px;opacity:.7}
+.kpi-value{font-size:28px;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums;font-family:var(--font-display);line-height:1.1}
+:root[data-vibe="terminal"] .kpi-value{font-size:22px;font-weight:700}
+.kpi-foot{display:flex;align-items:center;gap:8px;font-size:12px;margin-top:2px}
+.kpi-delta{display:inline-flex;align-items:center;gap:3px;font-weight:600;font-variant-numeric:tabular-nums}
+.kpi-delta.pos{color:var(--pos)}.kpi-delta.neg{color:var(--neg)}
+.kpi-delta svg{width:11px;height:11px}
+.kpi-sub{color:var(--text-faint);font-size:11px}
+.kpi-spark{position:absolute;right:8px;bottom:8px;width:80px;height:28px;opacity:.85;pointer-events:none}
+.grid-2{display:grid;grid-template-columns:2fr 1fr;gap:var(--pad)}
+.grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--pad)}
+.grid-equity{display:grid;grid-template-columns:1fr 320px;gap:var(--pad)}
+.grid-bottom{display:grid;grid-template-columns:1.4fr 1fr;gap:var(--pad)}
+.tag{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:600;padding:2px 7px;border-radius:999px;letter-spacing:.03em;text-transform:uppercase;background:var(--bg-elev2);color:var(--text-dim);border:1px solid var(--line)}
+:root[data-vibe="terminal"] .tag{border-radius:0}
+.tag.long{color:var(--pos);border-color:color-mix(in oklab,var(--pos) 35%,transparent);background:color-mix(in oklab,var(--pos) 10%,transparent)}
+.tag.short{color:var(--neg);border-color:color-mix(in oklab,var(--neg) 35%,transparent);background:color-mix(in oklab,var(--neg) 10%,transparent)}
+.tag.live{color:var(--accent)}
+.tag.live::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--accent);animation:pulse-dot 1.4s ease-out infinite;display:inline-block;flex-shrink:0}
+@keyframes pulse-dot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.85)}}
+.seg{display:inline-flex;background:var(--bg-elev2);border:1px solid var(--line);border-radius:var(--radius-sm);padding:2px}
+:root[data-vibe="terminal"] .seg{border-radius:0;padding:0}
+.seg button{appearance:none;border:0;background:transparent;color:var(--text-dim);padding:4px 10px;font:inherit;font-size:11px;font-weight:500;border-radius:4px;cursor:pointer;font-variant-numeric:tabular-nums}
+:root[data-vibe="terminal"] .seg button{border-radius:0;padding:4px 8px;text-transform:uppercase}
+.seg button:hover{color:var(--text)}
+.seg button.on{background:var(--bg);color:var(--text);box-shadow:0 1px 0 var(--line)}
+:root[data-vibe="terminal"] .seg button.on{background:transparent;color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+.tbl{width:100%;border-collapse:separate;border-spacing:0;font-variant-numeric:tabular-nums}
+.tbl th{text-align:left;font-size:10px;font-weight:600;color:var(--text-faint);letter-spacing:.05em;text-transform:uppercase;padding:8px 10px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--card-bg);z-index:1}
+.tbl td{padding:9px 10px;border-bottom:1px solid var(--line);font-size:12.5px;color:var(--text)}
+.tbl tbody tr{cursor:pointer;transition:background .08s}
+.tbl tbody tr:hover{background:var(--bg-elev2)}
+.tbl tbody tr.selected{background:color-mix(in oklab,var(--accent) 8%,transparent)}
+.tbl td.num{font-family:var(--font-mono);font-feature-settings:'tnum';text-align:right}
+.tbl td.pos{color:var(--pos)}.tbl td.neg{color:var(--neg)}.tbl td.mono{font-family:var(--font-mono)}
+.chart-wrap{position:relative;width:100%}
+.chart-svg{display:block;width:100%}
+.chart-grid line{stroke:var(--grid);stroke-width:1}
+.chart-axis text{fill:var(--text-faint);font-size:10px;font-family:var(--font-mono)}
+.chart-tooltip{position:absolute;pointer-events:none;background:var(--bg-elev);border:1px solid var(--line-strong);border-radius:var(--radius-sm);padding:8px 10px;font-size:11px;font-family:var(--font-mono);color:var(--text);white-space:nowrap;z-index:5;box-shadow:0 4px 12px rgba(0,0,0,.3);transform:translate(-50%,calc(-100% - 8px))}
+.chart-tooltip strong{color:var(--text);font-weight:600}
+.chart-tooltip .row{display:flex;justify-content:space-between;gap:12px}
+.chart-tooltip .row span:first-child{color:var(--text-dim)}
+:root[data-vibe="terminal"] .chart-tooltip{border-radius:0}
+.heatmap{display:flex;flex-direction:column;gap:6px}
+.heatmap-cell{aspect-ratio:1;border-radius:2px;cursor:pointer;background:var(--bg-elev2);transition:transform .08s;position:relative}
+.heatmap-cell:hover{transform:scale(1.4);z-index:2;outline:1px solid var(--text)}
+.heatmap-legend{display:flex;align-items:center;gap:8px;font-size:10px;color:var(--text-faint);justify-content:flex-end}
+.heatmap-legend .swatches{display:inline-flex;gap:2px}
+.heatmap-legend .swatch{width:11px;height:11px;border-radius:2px}
+.feed{display:flex;flex-direction:column}
+.feed-item{display:grid;grid-template-columns:28px 1fr auto;gap:10px;padding:10px 0;border-bottom:1px solid var(--line);align-items:flex-start}
+.feed-item:last-child{border-bottom:0}
+.feed-icon{width:24px;height:24px;border-radius:6px;display:grid;place-items:center;background:var(--bg-elev2);color:var(--text-dim);flex-shrink:0}
+.feed-icon svg{width:12px;height:12px}
+.feed-icon.pos{background:color-mix(in oklab,var(--pos) 14%,transparent);color:var(--pos)}
+.feed-icon.neg{background:color-mix(in oklab,var(--neg) 14%,transparent);color:var(--neg)}
+.feed-icon.acc{background:color-mix(in oklab,var(--accent) 14%,transparent);color:var(--accent)}
+.feed-icon.warn{background:color-mix(in oklab,var(--warn) 14%,transparent);color:var(--warn)}
+.feed-text{font-size:12.5px;color:var(--text);line-height:1.4}
+.feed-sub{font-size:11px;color:var(--text-faint);margin-top:1px;font-family:var(--font-mono)}
+.feed-time{font-size:11px;color:var(--text-faint);font-family:var(--font-mono);white-space:nowrap}
+.row{display:flex;align-items:center;gap:8px}.col{display:flex;flex-direction:column}
+.spacer{flex:1}.dim{color:var(--text-dim)}.faint{color:var(--text-faint)}.mono{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.pos{color:var(--pos)}.neg{color:var(--neg)}.num{font-variant-numeric:tabular-nums}
+.bar{height:4px;background:var(--bg-elev2);border-radius:999px;overflow:hidden}
+.bar>div{height:100%;background:var(--accent);transition:width .4s ease}
+:root[data-vibe="terminal"] .bar{border-radius:0}
+.drilldown{position:fixed;top:0;right:0;bottom:0;width:460px;max-width:100vw;background:var(--panel);border-left:1px solid var(--line-strong);box-shadow:-8px 0 28px rgba(0,0,0,.3);z-index:100;display:flex;flex-direction:column;transform:translateX(100%);transition:transform .2s cubic-bezier(.3,.7,.4,1)}
+.drilldown.open{transform:translateX(0)}
+.drilldown-head{padding:18px 22px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between}
+.drilldown-body{padding:18px 22px;overflow-y:auto;display:flex;flex-direction:column;gap:16px}
+.dd-row{display:flex;justify-content:space-between;align-items:baseline;padding:6px 0;border-bottom:1px solid var(--line)}
+.dd-row:last-child{border-bottom:0}
+.dd-row span:first-child{color:var(--text-dim);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+.dd-row span:last-child{font-family:var(--font-mono);font-variant-numeric:tabular-nums;font-size:13px}
+.dd-close{appearance:none;border:0;background:var(--bg-elev2);color:var(--text);width:28px;height:28px;border-radius:6px;cursor:pointer;font-size:16px;line-height:1;display:grid;place-items:center}
+.dd-close:hover{background:var(--bg)}
+.drilldown-scrim{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:99;opacity:0;pointer-events:none;transition:opacity .2s}
+.drilldown-scrim.open{opacity:1;pointer-events:auto}
+.strategy-tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:0}
+.strategy-tab{appearance:none;border:0;background:transparent;color:var(--text-dim);padding:10px 16px;font:inherit;font-size:13px;font-weight:500;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
+.strategy-tab:hover{color:var(--text)}
+.strategy-tab.on{color:var(--text);border-bottom-color:var(--accent)}
+.strategy-tab .dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.bot-row:hover{background:var(--bg-elev2);border-radius:6px}
+.main::-webkit-scrollbar{width:10px}
+.main::-webkit-scrollbar-track{background:transparent}
+.main::-webkit-scrollbar-thumb{background:var(--line-strong);border-radius:5px;border:2px solid var(--bg);background-clip:content-box}
+.main::-webkit-scrollbar-thumb:hover{background:var(--text-faint);background-clip:content-box;border:2px solid var(--bg)}
+.pulse-now{width:6px;height:6px;border-radius:50%;background:var(--pos);display:inline-block;position:relative;margin-right:6px}
+.pulse-now::after{content:'';position:absolute;inset:-3px;border-radius:50%;background:var(--pos);animation:pulse 1.6s ease-out infinite;opacity:.4}
+/* System Health */
+.circuit-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
+.circuit-card{background:var(--bg-elev2);border:1px solid var(--line);border-radius:var(--radius-sm);padding:12px 14px;display:flex;flex-direction:column;gap:4px}
+.circuit-card.open{border-color:color-mix(in oklab,var(--neg) 40%,transparent);background:color-mix(in oklab,var(--neg) 5%,transparent)}
+.circuit-card.closed{border-color:color-mix(in oklab,var(--pos) 40%,transparent)}
 /* Logs */
-.log-wrap{background:#070710;border:1px solid var(--border);border-radius:10px;height:500px;overflow-y:auto;padding:12px;font-family:monospace;font-size:12px}
-.log-entry{padding:3px 0;border-bottom:1px solid #12121a}
-.log-info{color:#60a5fa}.log-warn{color:#fbbf24}.log-error{color:var(--red)}.log-tuning{color:#a3e635}
-.tuning-badge{padding:2px 6px;border-radius:10px;font-size:10px;font-weight:700;background:#1a3a00;color:#a3e635;margin-left:4px}
-.tuning-reduced{background:#3a1a00;color:#fb923c}
-/* Table */
-table{width:100%;border-collapse:collapse;font-size:13px}
-th{color:var(--muted);font-weight:500;padding:10px 12px;text-align:left;border-bottom:1px solid var(--border)}
-td{padding:10px 12px;border-bottom:1px solid #12121a}
-tr:hover td{background:#0f0f1a}
-.badge{padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700}
-.buy{background:#1a3a1a;color:var(--green)}.sell{background:#3a1a1a;color:var(--red)}
-/* Scrollbar */
-::-webkit-scrollbar{width:4px;height:4px}::-webkit-scrollbar-track{background:#0f0f1a}::-webkit-scrollbar-thumb{background:#333;border-radius:2px}
-.section-title{font-size:14px;font-weight:700;color:var(--muted);margin-bottom:12px;text-transform:uppercase;letter-spacing:.5px}
+.log-list{display:flex;flex-direction:column;gap:0;max-height:480px;overflow-y:auto;font-family:var(--font-mono);font-size:11px}
+.log-entry{display:grid;grid-template-columns:90px 140px 1fr;gap:8px;padding:5px 10px;border-bottom:1px solid var(--line);line-height:1.4}
+.log-entry:hover{background:var(--bg-elev2)}
+.log-entry.type-error{background:color-mix(in oklab,var(--neg) 5%,transparent)}
+.log-entry.type-pos{color:var(--pos)}
+.log-entry.type-neg{color:var(--neg)}
+.log-entry.type-acc{color:var(--accent)}
+.log-stream{color:var(--text-faint);font-size:10px}
+/* Tweaks */
+.tweaks-toggle{position:fixed;bottom:20px;right:20px;z-index:200;background:var(--bg-elev);border:1px solid var(--line-strong);border-radius:var(--radius-sm);padding:8px 14px;color:var(--text-dim);font:inherit;font-size:12px;cursor:pointer;display:flex;align-items:center;gap:6px;box-shadow:0 4px 12px rgba(0,0,0,.3)}
+.tweaks-toggle:hover{background:var(--bg-elev2);color:var(--text)}
+.tweaks-toggle svg{width:14px;height:14px}
+.tweaks-panel{position:fixed;bottom:60px;right:20px;z-index:201;background:var(--panel);border:1px solid var(--line-strong);border-radius:var(--radius);padding:16px;width:280px;box-shadow:0 8px 24px rgba(0,0,0,.4);display:flex;flex-direction:column;gap:14px}
+.tweak-section{display:flex;flex-direction:column;gap:8px}
+.tweak-section-label{font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-faint)}
+.tweak-row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px}
+.tweak-row label{color:var(--text-dim)}
+.tweak-row select{background:var(--bg-elev2);border:1px solid var(--line);border-radius:4px;color:var(--text);font:inherit;font-size:11px;padding:3px 6px;cursor:pointer}
+.accent-dots{display:flex;gap:6px;flex-wrap:wrap}
+.accent-dot{width:18px;height:18px;border-radius:50%;cursor:pointer;border:2px solid transparent;transition:border-color .1s}
+.accent-dot.active{border-color:var(--text)}
+.ws-badge{display:inline-flex;align-items:center;gap:5px;font-size:10px;font-family:var(--font-mono);padding:2px 8px;border-radius:999px;background:var(--bg-elev2);border:1px solid var(--line)}
+.ws-badge.on{color:var(--pos)}
+.ws-badge.off{color:var(--neg)}
+.ws-dot{width:6px;height:6px;border-radius:50%;background:currentColor}
+@media(max-width:1180px){.kpi-grid{grid-template-columns:repeat(2,1fr)}.grid-equity{grid-template-columns:1fr}.grid-bottom{grid-template-columns:1fr}.grid-3{grid-template-columns:1fr}}
+@media(max-width:760px){:root{--sidebar-w:64px}.sb-brand-name,.sb-brand-sub,.sb-section-label,.sb-item span,.sb-item-badge,.sb-foot{display:none}.sb-item{justify-content:center}.drilldown{width:100vw}}
+/* ── Decision Trace ──────────────────────────────────────────────────────── */
+.dt-root{display:flex;flex-direction:column;gap:0}
+.dt-header{display:flex;gap:20px;flex-wrap:wrap;padding:10px 0 14px;border-bottom:1px solid var(--line)}
+.dt-header-stat .val{font-size:24px;font-weight:700;font-family:var(--font-mono);font-variant-numeric:tabular-nums;line-height:1}
+.dt-header-stat .lbl{font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--text-faint);margin-top:1px}
+.dt-filterbar{display:flex;align-items:center;gap:8px;padding:10px 0;flex-wrap:wrap}
+.dt-filterbar input{background:var(--bg-elev2);border:1px solid var(--line);border-radius:var(--radius-sm);color:var(--text);font:inherit;font-size:11px;padding:5px 9px;min-width:200px;flex:1}
+.dt-filterbar select{background:var(--bg-elev2);border:1px solid var(--line);border-radius:var(--radius-sm);color:var(--text);font:inherit;font-size:11px;padding:5px 9px;cursor:pointer}
+.dt-split{display:grid;grid-template-columns:minmax(320px,400px) 1fr;gap:0;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;min-height:500px}
+.dt-list{overflow-y:auto;border-right:1px solid var(--line);background:var(--panel);max-height:calc(100vh - 280px)}
+.dt-row{display:grid;grid-template-columns:4px 1fr auto;gap:0;cursor:pointer;border-bottom:1px solid var(--line);transition:background .08s}
+.dt-row:hover{background:var(--bg-elev2)}.dt-row.sel{background:color-mix(in oklab,var(--accent) 8%,transparent)}
+.dt-row-bar{width:4px;min-height:60px}.dt-row-bar.EXECUTED{background:var(--pos)}.dt-row-bar.REJECTED{background:var(--neg)}.dt-row-bar.PENDING{background:var(--warn)}
+.dt-row-body{padding:10px 12px;min-width:0}
+.dt-row-dur{padding:10px 10px 10px 0;font-family:var(--font-mono);font-size:10px;color:var(--text-faint);white-space:nowrap;align-self:center}
+.dt-trace{overflow-y:auto;background:var(--bg-elev);padding:18px;max-height:calc(100vh - 280px)}
+.dt-meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
+.dt-meta-cell{background:var(--bg-elev2);border:1px solid var(--line);border-radius:4px;padding:8px 10px}
+.dt-timeline{display:flex;flex-direction:column}
+.dt-evt{display:grid;grid-template-columns:80px 16px 1fr;gap:8px;padding:8px 0;align-items:flex-start;font-size:11px;border-bottom:1px solid var(--line)}
+.dt-evt:last-child{border-bottom:0}
+.dt-evt-dot{width:8px;height:8px;border-radius:50%;background:var(--text-faint);margin-top:3px;flex-shrink:0}
+.dt-evt-dot.pos{background:var(--pos)}.dt-evt-dot.neg{background:var(--neg)}.dt-evt-dot.acc{background:var(--accent)}.dt-evt-dot.warn{background:var(--warn)}
+.dt-pill{display:inline-flex;align-items:center;font-size:9px;font-weight:700;padding:1px 6px;border-radius:999px;text-transform:uppercase;letter-spacing:.04em}
+.dt-pill.EXECUTED{color:var(--pos);background:color-mix(in oklab,var(--pos) 14%,transparent)}
+.dt-pill.REJECTED{color:var(--neg);background:color-mix(in oklab,var(--neg) 14%,transparent)}
+.dt-pill.PENDING{color:var(--warn);background:color-mix(in oklab,var(--warn) 14%,transparent)}
+.dt-empty{display:flex;align-items:center;justify-content:center;min-height:200px;color:var(--text-faint);font-size:13px;text-align:center;padding:32px}
+/* ── Event Stream ────────────────────────────────────────────────────────── */
+.es-event-list{max-height:calc(100vh - 260px);overflow-y:auto;display:flex;flex-direction:column}
+.es-evt{display:grid;grid-template-columns:80px 60px 150px 1fr 100px;gap:8px;padding:6px 12px;border-bottom:1px solid var(--line);cursor:pointer;transition:background .08s;font-size:11px;font-family:var(--font-mono);align-items:baseline}
+.es-evt:hover,.es-evt.expanded{background:var(--bg-elev2)}
+.es-detail{padding:8px 12px 10px;background:var(--bg-elev2);border-bottom:1px solid var(--line-strong);font-family:var(--font-mono);font-size:10px;color:var(--text-dim);white-space:pre-wrap;word-break:break-all;max-height:180px;overflow-y:auto}
+.lv-badge{display:inline-flex;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;text-transform:uppercase;letter-spacing:.03em;font-family:var(--font-mono)}
+.lv-badge.error{color:var(--neg);background:color-mix(in oklab,var(--neg) 14%,transparent)}
+.lv-badge.warn{color:var(--warn);background:color-mix(in oklab,var(--warn) 14%,transparent)}
+.lv-badge.info{color:var(--accent);background:color-mix(in oklab,var(--accent) 10%,transparent)}
+.lv-badge.debug{color:var(--text-faint);background:var(--bg-elev2);border:1px solid var(--line)}
+/* ── System Health (enhanced) ────────────────────────────────────────────── */
+.sh-gauge{position:relative;height:5px;background:var(--bg-elev2);border-radius:3px;overflow:hidden;margin-top:6px}
+.sh-gauge-fill{position:absolute;left:0;top:0;height:100%;border-radius:3px;transition:width .5s ease}
+.sh-res-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:10px}
+.sh-res-card{background:var(--bg-elev2);border:1px solid var(--line);border-radius:var(--radius-sm);padding:12px 14px}
+.sh-eb-row{display:grid;grid-template-columns:1fr auto auto;gap:12px;padding:6px 0;border-bottom:1px solid var(--line);align-items:center;font-size:12px}
+.sh-eb-row:last-child{border-bottom:0}
+.sh-svc-table{width:100%;border-collapse:separate;border-spacing:0}
+.sh-svc-table th{font-size:9px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--text-faint);padding:5px 10px;border-bottom:1px solid var(--line);text-align:left}
+.sh-svc-table th:not(:first-child){text-align:right}
+.sh-svc-table td{padding:8px 10px;border-bottom:1px solid var(--line);font-size:12px}
+.sh-svc-table td:not(:first-child){text-align:right;font-family:var(--font-mono)}
+.sh-svc-table tbody tr:hover{background:var(--bg-elev2)}
 </style>
 </head>
-<body>
+<body><div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback, useMemo, useId } = React;
 
-<header>
-  <div class="logo">Master<span>Bot</span></div>
-  <div class="conn-bar">
-    <input id="urlInput" placeholder="https://..." value="">
-    <button class="btn btn-gold" onclick="connect()">Verbinden</button>
-    <div class="dot" id="dot"></div>
-    <span style="font-size:12px;color:var(--muted)" id="connText">Nicht verbunden</span>
-  </div>
-</header>
-
-<nav>
-  <div class="nav-tab active" onclick="showPage('dashboard',this)">Dashboard</div>
-  <div class="nav-tab" onclick="showPage('strategien',this)">Strategien</div>
-  <div class="nav-tab" onclick="showPage('trades',this)">Trades</div>
-  <div class="nav-tab" onclick="showPage('autotune',this)">⚡ AutoTune</div>
-  <div class="nav-tab" onclick="showPage('ml',this)">🤖 ML</div>
-  <div class="nav-tab" onclick="showPage('logs',this)">Live-Logs</div>
-</nav>
-
-<main>
-
-<!-- DASHBOARD -->
-<div id="page-dashboard" class="page active">
-  <div class="grid grid-4" id="overview-cards"></div>
-  <div style="margin-top:24px">
-    <div class="section-title">Equity-Kurven</div>
-    <div class="grid grid-2" id="equity-charts"></div>
-  </div>
-</div>
-
-<!-- STRATEGIEN -->
-<div id="page-strategien" class="page">
-  <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
-    <span style="font-size:13px;color:var(--muted)">Alle Strategien verwalten, aktivieren/deaktivieren und einstellen</span>
-    <button class="btn btn-dark btn-sm" onclick="refreshAll()" style="margin-left:auto">↻ Aktualisieren</button>
-  </div>
-  <div class="strat-grid" id="strat-cards"></div>
-</div>
-
-<!-- TRADES -->
-<div id="page-trades" class="page">
-  <div style="display:flex;gap:10px;margin-bottom:16px;align-items:center">
-    <select id="tradeFilter" onchange="renderTrades()" style="background:#12121a;border:1px solid var(--border);color:var(--text);padding:8px 12px;border-radius:8px;font-size:13px">
-      <option value="">Alle Strategien</option>
-    </select>
-    <span id="tradeCount" style="color:var(--muted);font-size:13px"></span>
-  </div>
-  <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden">
-    <table><thead><tr><th>Datum</th><th>Strategie</th><th>Side</th><th>P&L</th><th>Equity</th></tr></thead>
-    <tbody id="trade-table"></tbody></table>
-  </div>
-</div>
-
-<!-- ML -->
-<div id="page-ml" class="page">
-  <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
-    <span style="font-size:13px;color:var(--muted)">Machine Learning — Modelle trainieren und Predictions einsehen</span>
-    <button class="btn btn-gold btn-sm" onclick="mlTrainAll()" style="margin-left:auto">🔄 Alle trainieren</button>
-  </div>
-  <div class="grid grid-4" id="ml-cards"></div>
-  <div style="margin-top:24px">
-    <div class="section-title">Letzte ML-Entscheidungen</div>
-    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden">
-      <table><thead><tr><th>Zeit</th><th>Strategie</th><th>Side</th><th>Entscheidung</th><th>Konfidenz</th><th>Grund</th></tr></thead>
-      <tbody id="ml-table"></tbody></table>
-    </div>
-  </div>
-</div>
-
-<!-- LOGS -->
-<div id="page-logs" class="page">
-  <div style="display:flex;gap:8px;margin-bottom:12px">
-    <button class="btn btn-dark btn-sm" onclick="clearLogs()">🗑 Logs leeren</button>
-    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)">
-      <input type="checkbox" id="autoScroll" checked> Auto-Scroll
-    </label>
-    <span style="margin-left:auto;font-size:11px;color:var(--muted)">
-      🟢 info &nbsp; 🟡 warn &nbsp; 🔴 error &nbsp; 🟩 tuning
-    </span>
-  </div>
-  <div class="log-wrap" id="log-wrap"></div>
-</div>
-
-<!-- AutoTune Panel (auf Dashboard) -->
-<div id="page-autotune" class="page">
-  <div class="grid grid-4" id="tune-cards"></div>
-  <div style="margin-top:24px">
-    <div class="section-title">AutoTune History</div>
-    <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden">
-      <table><thead><tr><th>Zeit</th><th>Strategie</th><th>Aktion</th><th>Win Rate</th><th>Konsek. Verluste</th></tr></thead>
-      <tbody id="tune-table"></tbody></table>
-    </div>
-  </div>
-</div>
-
-</main>
-
-<!-- Settings Modal -->
-<div class="modal-bg" id="modal">
-  <div class="modal">
-    <h2 id="modal-title">Einstellungen</h2>
-    <div class="field-row">
-      <div class="field"><label>Risiko %</label><input type="number" id="s-riskPct" step="0.1" min="0.1" max="10"></div>
-      <div class="field"><label>Min. RRR</label><input type="number" id="s-minRRR" step="0.1" min="1"></div>
-    </div>
-    <div class="field-row">
-      <div class="field"><label>Leverage</label><input type="number" id="s-leverage" step="1" min="1" max="20"></div>
-      <div class="field"><label>Max. Drawdown %</label><input type="number" id="s-maxDrawdownPct" step="1" min="1"></div>
-    </div>
-    <div class="field-row">
-      <div class="field"><label>Tagesziel %</label><input type="number" id="s-tagsStopPct" step="0.5" min="0.1"></div>
-      <div class="field"><label>Start-Equity (€)</label><input type="number" id="s-startEquity" step="100" min="100"></div>
-    </div>
-    <div class="modal-actions">
-      <button class="btn btn-dark" onclick="closeModal()">Abbrechen</button>
-      <button class="btn btn-gold" onclick="saveSettings()">Speichern</button>
-    </div>
-  </div>
-</div>
-
-<script>
-const STRAT_NAMES = ['mittel','aggressiv','smart','konservativ','optimiert','test','adaptive','steady'];
-const STRAT_COLORS = { mittel:'#f59e0b',aggressiv:'#ef4444',smart:'#8b5cf6',konservativ:'#22c55e',optimiert:'#3b82f6',test:'#ec4899',adaptive:'#06b6d4',steady:'#a3e635' };
-
-let BASE = '', ws = null, settings = {}, performance = {}, equityData = {}, allTrades = {}, charts = {}, currentModalStrat = null;
-let tuningData = {}, settingsOriginal = {}, mlData = {}, mlLog = [];
-
-function showPage(id, el) {
-  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-  document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
-  document.getElementById(`page-${id}`).classList.add('active');
-  el.classList.add('active');
-  if (id === 'trades') renderTrades();
-  if (id === 'autotune') renderTuning();
-  if (id === 'ml') renderML();
-}
-
-function setConn(ok, msg) {
-  document.getElementById('dot').className = 'dot ' + (ok ? 'ok' : 'err');
-  document.getElementById('connText').textContent = msg;
-}
-
-async function connect() {
-  BASE = document.getElementById('urlInput').value.trim().replace(/\/$/, '');
-  if (!BASE) return;
-  localStorage.setItem('mb_url', BASE);
-  setConn(false, 'Verbinde...');
-  try {
-    const [perf, eq, tr, sett, tune] = await Promise.all([
-      fetch(`${BASE}/api/performance`).then(r => r.json()),
-      fetch(`${BASE}/api/equity`).then(r => r.json()),
-      fetch(`${BASE}/api/trades`).then(r => r.json()),
-      fetch(`${BASE}/api/settings`).then(r => r.json()),
-      fetch(`${BASE}/api/tuning`).then(r => r.json()),
-    ]);
-    performance = perf; equityData = eq; allTrades = tr; settings = sett; tuningData = tune;
-    settingsOriginal = JSON.parse(JSON.stringify(sett)); // Originalwerte merken
-    setConn(true, `Verbunden — ${new Date().toLocaleTimeString('de-DE')}`);
-    renderDashboard(); renderStratCards(); populateTradeFilter();
-    connectWS();
-  } catch(e) { setConn(false, 'Fehler: ' + e.message); }
-}
-
-function connectWS() {
-  if (ws) ws.close();
-  const wsUrl = BASE.replace('https://','wss://').replace('http://','ws://');
-  ws = new WebSocket(wsUrl);
-  ws.onmessage = ({data}) => {
-    const { type, data: d } = JSON.parse(data);
-    if (type === 'init') { if (d.settings) settings = d.settings; if (d.performance) { performance = d.performance; renderDashboard(); renderStratCards(); } if (d.logs) d.logs.forEach(l => appendLog(l)); }
-    if (type === 'performance') { performance[d.name] = d.perf; updateStratCard(d.name); updateOverviewCard(d.name); }
-    if (type === 'equity') { if (!equityData[d.name]) equityData[d.name] = []; equityData[d.name].push({ts:d.ts,equity:d.equity}); updateChart(d.name); }
-    if (type === 'trade') { if (!allTrades[d.name]) allTrades[d.name] = []; allTrades[d.name].unshift(d); }
-    if (type === 'log') appendLog(d);
-    if (type === 'settings') { settings[d.name] = d.settings; renderStratCards(); }
-    if (type === 'regime') updateRegimeBadge(d);
-    if (type === 'ml_status') { mlData = d; }
-    if (type === 'ml_skip') {
-      mlLog.unshift({ ts: new Date().toISOString(), name: d.name, side: d.side, entscheidung: 'skip', konfidenz: d.konfidenz, grund: d.grund });
-      if (mlLog.length > 100) mlLog.pop();
-    }
-    if (type === 'tuning') {
-      if (!tuningData[d.name]) tuningData[d.name] = [];
-      tuningData[d.name].unshift(d);
-      appendLog({ level:'tuning', msg: d.aktion, ts: d.ts });
-      renderStratCards(); // Risk-Badge aktualisieren
-    }
-  };
-  ws.onclose = () => setConn(false, 'Verbindung unterbrochen');
-}
-
-// ── Dashboard ──────────────────────────────────────────
-function renderDashboard() {
-  const cards = document.getElementById('overview-cards');
-  let totalPnL = 0;
-  cards.innerHTML = '';
-  STRAT_NAMES.forEach(n => {
-    const p = performance[n] || {}; totalPnL += p.gesamtPnL || 0;
-    const pnl = p.gesamtPnL || 0; const cls = pnl >= 0 ? 'pos' : 'neg';
-    cards.innerHTML += `<div class="card" id="ov-${n}">
-      <h3>${n}</h3>
-      <div class="big-val ${cls}" id="ov-pnl-${n}">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}€</div>
-      <div class="sub-val">Win: <span id="ov-wr-${n}">${p.winRate||0}%</span> · Trades: <span id="ov-t-${n}">${p.trades||0}</span></div>
-      <div class="sub-val" style="margin-top:4px">Equity: <span class="gold">${(p.equity||0).toFixed(2)}€</span></div>
-    </div>`;
-  });
-  cards.innerHTML += `<div class="card" style="border-color:var(--gold)22">
-    <h3>Gesamt P&L</h3>
-    <div class="big-val gold">${totalPnL >= 0 ? '+' : ''}${totalPnL.toFixed(2)}€</div>
-    <div class="sub-val">Alle ${STRAT_NAMES.length} Strategien</div>
-  </div>`;
-
-  // Equity Charts
-  const ec = document.getElementById('equity-charts');
-  ec.innerHTML = '';
-  STRAT_NAMES.forEach(n => {
-    ec.innerHTML += `<div class="card"><h3>${n} — Equity</h3><canvas id="chart-${n}" height="100"></canvas></div>`;
-  });
-  STRAT_NAMES.forEach(n => buildChart(n));
-}
-
-function updateOverviewCard(name) {
-  const p = performance[name] || {};
-  const el = document.getElementById(`ov-pnl-${name}`); if (!el) return;
-  const pnl = p.gesamtPnL || 0;
-  el.textContent = (pnl >= 0 ? '+' : '') + pnl.toFixed(2) + '€';
-  el.className = 'big-val ' + (pnl >= 0 ? 'pos' : 'neg');
-  const wr = document.getElementById(`ov-wr-${name}`); if (wr) wr.textContent = (p.winRate||0) + '%';
-  const t = document.getElementById(`ov-t-${name}`); if (t) t.textContent = p.trades||0;
-}
-
-function buildChart(name) {
-  const canvas = document.getElementById(`chart-${name}`); if (!canvas) return;
-  if (charts[name]) { charts[name].destroy(); delete charts[name]; }
-  const data = equityData[name] || [];
-  charts[name] = new Chart(canvas, {
-    type: 'line',
-    data: { labels: data.map(d => new Date(d.ts).toLocaleDateString('de-DE')), datasets: [{ label:'Equity', data: data.map(d => d.equity), borderColor: STRAT_COLORS[name], backgroundColor: STRAT_COLORS[name]+'22', fill:true, tension:.3, pointRadius:0 }] },
-    options: { responsive:true, plugins:{legend:{display:false}}, scales:{ x:{ticks:{color:'#555',maxTicksLimit:5},grid:{color:'#1e1e2e'}}, y:{ticks:{color:'#555'},grid:{color:'#1e1e2e'}} } }
-  });
-}
-
-function updateChart(name) {
-  const c = charts[name]; if (!c) return;
-  const data = equityData[name] || [];
-  c.data.labels = data.map(d => new Date(d.ts).toLocaleDateString('de-DE'));
-  c.data.datasets[0].data = data.map(d => d.equity);
-  c.update('quiet');
-}
-
-// ── Strategie Cards ────────────────────────────────────
-function renderStratCards() {
-  const container = document.getElementById('strat-cards');
-  container.innerHTML = '';
-  STRAT_NAMES.forEach(n => {
-    const s = settings[n] || {}; const p = performance[n] || {};
-    const pnl = p.gesamtPnL || 0; const isOn = s.enabled !== false;
-    const isSmart = n === 'smart';
-    container.innerHTML += `<div class="strat-card" id="sc-${n}">
-      <div class="strat-header">
-        <div style="width:10px;height:10px;border-radius:50%;background:${STRAT_COLORS[n]}"></div>
-        <span class="strat-name">${n.charAt(0).toUpperCase()+n.slice(1)}</span>
-        ${isSmart ? `<span class="regime-badge regime-AKTIV" id="regime-badge">AKTIV</span>` : ''}
-        ${isRiskReduced(n) ? `<span class="tuning-badge tuning-reduced">⚡ reduziert</span>` : ''}
-        <button class="toggle ${isOn ? 'on' : ''}" id="toggle-${n}" onclick="toggleStrat('${n}')"></button>
-      </div>
-      <div class="strat-stats">
-        <div class="stat-box"><div class="v ${pnl >= 0 ? 'pos' : 'neg'}">${pnl >= 0 ? '+' : ''}${pnl.toFixed(1)}€</div><div class="l">P&L</div></div>
-        <div class="stat-box"><div class="v">${p.winRate||0}%</div><div class="l">Win Rate</div></div>
-        <div class="stat-box"><div class="v">${p.trades||0}</div><div class="l">Trades</div></div>
-      </div>
-      <div style="font-size:11px;color:var(--muted);display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-bottom:12px">
-        <span>Risiko: <b style="color:var(--text)">${s.riskPct||0}%</b></span>
-        <span>RRR: <b style="color:var(--text)">${s.minRRR||0}</b></span>
-        <span>Leverage: <b style="color:var(--text)">${s.leverage||0}x</b></span>
-        <span>Max DD: <b style="color:var(--text)">${s.maxDrawdownPct||0}%</b></span>
-      </div>
-      <canvas id="sc-chart-${n}" class="chart-mini"></canvas>
-      <div class="strat-actions">
-        <button class="btn btn-dark btn-sm" onclick="openSettings('${n}')" style="flex:1">⚙️ Einstellungen</button>
-        ${isRiskReduced(n) ? `<button class="btn btn-sm" style="background:#1a3a00;color:#a3e635" onclick="resetTuning('${n}')">↑ Risk reset</button>` : ''}
-        ${isSmart ? `<button class="btn btn-sm" style="background:#3a1a1a;color:var(--red)" onclick="resetSmartRegime()">Reset Regime</button>` : ''}
-      </div>
-    </div>`;
-  });
-  STRAT_NAMES.forEach(n => buildMiniChart(n));
-}
-
-function buildMiniChart(name) {
-  const canvas = document.getElementById(`sc-chart-${name}`); if (!canvas) return;
-  const data = (equityData[name] || []).slice(-30);
-  if (!data.length) return;
-  new Chart(canvas, {
-    type:'line',
-    data:{ labels: data.map((_,i)=>i), datasets:[{ data: data.map(d=>d.equity), borderColor: STRAT_COLORS[name], borderWidth:1.5, fill:false, tension:.3, pointRadius:0 }] },
-    options:{ responsive:true, plugins:{legend:{display:false},tooltip:{enabled:false}}, scales:{x:{display:false},y:{display:false}}, animation:false }
-  });
-}
-
-function updateStratCard(name) {
-  const p = performance[name] || {}; const s = settings[name] || {};
-  const card = document.getElementById(`sc-${name}`); if (!card) return;
-  const pnl = p.gesamtPnL || 0;
-  const cells = card.querySelectorAll('.stat-box .v');
-  if (cells[0]) { cells[0].textContent = (pnl >= 0 ? '+' : '') + pnl.toFixed(1) + '€'; cells[0].className = 'v ' + (pnl >= 0 ? 'pos' : 'neg'); }
-  if (cells[1]) cells[1].textContent = (p.winRate||0) + '%';
-  if (cells[2]) cells[2].textContent = p.trades||0;
-}
-
-async function toggleStrat(name) {
-  const s = settings[name] || {}; const newVal = !s.enabled;
-  try {
-    await fetch(`${BASE}/api/settings/${name}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ enabled: newVal }) });
-    settings[name].enabled = newVal;
-    const btn = document.getElementById(`toggle-${name}`);
-    if (btn) btn.className = 'toggle ' + (newVal ? 'on' : '');
-  } catch(e) { alert('Fehler: ' + e.message); }
-}
-
-function updateRegimeBadge(smart) {
-  const el = document.getElementById('regime-badge'); if (!el) return;
-  el.className = `regime-badge regime-${smart.modus}`;
-  el.textContent = smart.modus;
-}
-
-async function resetSmartRegime() {
-  try { await fetch(`${BASE}/api/smart/reset`, { method:'POST' }); alert('Regime zurückgesetzt ✅'); }
-  catch(e) { alert('Fehler: ' + e.message); }
-}
-
-function isRiskReduced(name) {
-  const cur = settings[name]?.riskPct;
-  const orig = settingsOriginal[name]?.riskPct;
-  return cur && orig && cur < orig;
-}
-
-async function resetTuning(name) {
-  try {
-    await fetch(`${BASE}/api/tuning/reset/${name}`, { method:'POST' });
-    if (settings[name] && settingsOriginal[name]) settings[name].riskPct = settingsOriginal[name].riskPct;
-    renderStratCards();
-  } catch(e) { alert('Fehler: ' + e.message); }
-}
-
-// ── AutoTune Tab ──────────────────────────────────────
-async function renderTuning() {
-  // Status-Karten
-  const cards = document.getElementById('tune-cards');
-  cards.innerHTML = STRAT_NAMES.map(n => {
-    const s = settings[n] || {};
-    const orig = settingsOriginal[n] || {};
-    const reduced = isRiskReduced(n);
-    const history = tuningData[n] || [];
-    return `<div class="card">
-      <h3>${n}</h3>
-      <div style="font-size:22px;font-weight:700;color:${reduced ? '#fb923c' : '#a3e635'}">${s.riskPct||0}%</div>
-      <div style="font-size:11px;color:var(--muted);margin-top:4px">
-        ${reduced ? `⚡ reduziert (Original: ${orig.riskPct||0}%)` : '✅ Normal (${orig.riskPct||0}%)'}
-      </div>
-      <div style="font-size:11px;color:var(--muted);margin-top:8px">${history.length} AutoTune Events</div>
-      ${reduced ? `<button class="btn btn-dark btn-sm" style="margin-top:10px;width:100%;color:#a3e635" onclick="resetTuning('${n}')">↑ Risk zurücksetzen</button>` : ''}
-    </div>`;
-  }).join('');
-
-  // History Tabelle
-  let rows = [];
-  Object.entries(tuningData).forEach(([name, events]) => {
-    (events || []).forEach(e => rows.push({ ...e, name }));
-  });
-  rows.sort((a,b) => new Date(b.ts) - new Date(a.ts));
-  document.getElementById('tune-table').innerHTML = rows.slice(0,100).map(r => `
-    <tr>
-      <td>${new Date(r.ts).toLocaleString('de-DE')}</td>
-      <td><span style="color:${STRAT_COLORS[r.name]}">${r.name}</span></td>
-      <td style="color:${r.aktion?.includes('🔽') ? '#fb923c' : '#a3e635'}">${r.aktion || r.msg || '–'}</td>
-      <td>${r.wr != null ? r.wr + '%' : '–'}</td>
-      <td>${r.konsek != null ? r.konsek : '–'}</td>
-    </tr>`).join('');
-}
-
-// ── Settings Modal ─────────────────────────────────────
-function openSettings(name) {
-  currentModalStrat = name;
-  const s = settings[name] || {};
-  document.getElementById('modal-title').textContent = `⚙️ ${name.charAt(0).toUpperCase()+name.slice(1)} — Einstellungen`;
-  document.getElementById('s-riskPct').value = s.riskPct || 1;
-  document.getElementById('s-minRRR').value = s.minRRR || 2;
-  document.getElementById('s-leverage').value = s.leverage || 5;
-  document.getElementById('s-maxDrawdownPct').value = s.maxDrawdownPct || 20;
-  document.getElementById('s-tagsStopPct').value = s.tagsStopPct || 5;
-  document.getElementById('s-startEquity').value = s.startEquity || 1000;
-  document.getElementById('modal').classList.add('open');
-}
-function closeModal() { document.getElementById('modal').classList.remove('open'); }
-
-async function saveSettings() {
-  if (!currentModalStrat) return;
-  const body = {
-    riskPct: parseFloat(document.getElementById('s-riskPct').value),
-    minRRR: parseFloat(document.getElementById('s-minRRR').value),
-    leverage: parseInt(document.getElementById('s-leverage').value),
-    maxDrawdownPct: parseFloat(document.getElementById('s-maxDrawdownPct').value),
-    tagsStopPct: parseFloat(document.getElementById('s-tagsStopPct').value),
-    startEquity: parseFloat(document.getElementById('s-startEquity').value),
-  };
-  try {
-    await fetch(`${BASE}/api/settings/${currentModalStrat}`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
-    settings[currentModalStrat] = { ...settings[currentModalStrat], ...body };
-    closeModal(); renderStratCards();
-  } catch(e) { alert('Fehler: ' + e.message); }
-}
-
-document.getElementById('modal').addEventListener('click', e => { if (e.target === document.getElementById('modal')) closeModal(); });
-
-// ── Trades ────────────────────────────────────────────
-function populateTradeFilter() {
-  const sel = document.getElementById('tradeFilter');
-  STRAT_NAMES.forEach(n => { const o = document.createElement('option'); o.value=n; o.textContent=n; sel.appendChild(o); });
-}
-
-function renderTrades() {
-  const filter = document.getElementById('tradeFilter').value;
-  let rows = [];
-  const sources = filter ? { [filter]: allTrades[filter] || [] } : allTrades;
-  Object.entries(sources).forEach(([name, trades]) => {
-    (trades || []).forEach(t => rows.push({ ...t, name }));
-  });
-  rows.sort((a,b) => new Date(b.datum) - new Date(a.datum));
-  document.getElementById('tradeCount').textContent = rows.length + ' Trades';
-  document.getElementById('trade-table').innerHTML = rows.slice(0,200).map(t => {
-    const pnl = t.pnl || 0; const cls = pnl >= 0 ? 'pos' : 'neg';
-    return `<tr><td>${new Date(t.datum).toLocaleString('de-DE')}</td><td><span style="color:${STRAT_COLORS[t.name]}">${t.name}</span></td>
-    <td><span class="badge ${t.side==='BUY'?'buy':'sell'}">${t.side||'–'}</span></td>
-    <td class="${cls}">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}€</td>
-    <td>${(t.equity||0).toFixed(2)}€</td></tr>`;
-  }).join('');
-}
-
-// ── Logs ──────────────────────────────────────────────
-function appendLog(entry) {
-  const wrap = document.getElementById('log-wrap');
-  const div = document.createElement('div');
-  div.className = `log-entry log-${entry.level}`;
-  div.textContent = `[${new Date(entry.ts).toLocaleTimeString('de-DE')}] ${entry.msg}`;
-  wrap.appendChild(div);
-  if (document.getElementById('autoScroll').checked) wrap.scrollTop = wrap.scrollHeight;
-  while (wrap.children.length > 300) wrap.removeChild(wrap.firstChild);
-}
-function clearLogs() { document.getElementById('log-wrap').innerHTML = ''; }
-
-async function refreshAll() { await connect(); }
-
-// ── ML Tab ────────────────────────────────────────────
-async function renderML() {
-  try {
-    const res = await fetch(`${BASE}/api/ml-status`);
-    const data = await res.json();
-    mlData = data.status || {};
-  } catch {}
-
-  const cards = document.getElementById('ml-cards');
-  cards.innerHTML = STRAT_NAMES.map(n => {
-    const m = mlData[n] || {};
-    const trainiert = m.trainiert;
-    const bereit = m.bereit;
-    const trades = m.n_trades || 0;
-    const acc = m.meta?.accuracy_cv;
-    const farbe = trainiert ? '#22c55e' : bereit ? '#f59e0b' : '#ef4444';
-    const status = trainiert ? '✅ Trainiert' : bereit ? '⏳ Bereit' : `❌ ${trades}/30 Trades`;
-    return `<div class="card">
-      <h3>${n}</h3>
-      <div style="font-size:20px;font-weight:700;color:${farbe}">${status}</div>
-      ${acc ? `<div style="font-size:12px;color:var(--muted);margin-top:6px">Accuracy: <b style="color:var(--text)">${(acc*100).toFixed(1)}%</b></div>` : ''}
-      <div style="font-size:11px;color:var(--muted);margin-top:4px">${trades} Trades gesammelt</div>
-      ${m.meta?.trainiert_am ? `<div style="font-size:10px;color:var(--muted);margin-top:4px">Trainiert: ${new Date(m.meta.trainiert_am).toLocaleDateString('de-DE')}</div>` : ''}
-      ${bereit ? `<button class="btn btn-dark btn-sm" style="margin-top:10px;width:100%" onclick="mlTrain('${n}')">🔄 Trainieren</button>` : ''}
-    </div>`;
-  }).join('');
-
-  // ML-Log Tabelle
-  document.getElementById('ml-table').innerHTML = mlLog.slice(0,50).map(r => `
-    <tr>
-      <td>${new Date(r.ts).toLocaleTimeString('de-DE')}</td>
-      <td><span style="color:${STRAT_COLORS[r.name]}">${r.name}</span></td>
-      <td><span class="badge ${r.side==='BUY'?'buy':'sell'}">${r.side||'–'}</span></td>
-      <td style="color:${r.entscheidung==='trade'?'#22c55e':'#ef4444'};font-weight:700">${r.entscheidung==='trade'?'✅ TRADE':'❌ SKIP'}</td>
-      <td>${r.konfidenz!=null ? (r.konfidenz*100).toFixed(0)+'%' : '–'}</td>
-      <td style="font-size:11px;color:var(--muted)">${r.grund||'–'}</td>
-    </tr>`).join('');
-}
-
-async function mlTrain(strategie) {
-  try {
-    const r = await fetch(`${BASE}/api/ml-train`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ strategie }) });
-    const d = await r.json();
-    alert(`Training: ${JSON.stringify(d[strategie] || d, null, 2)}`);
-    renderML();
-  } catch(e) { alert('Fehler: ' + e.message); }
-}
-
-async function mlTrainAll() {
-  try {
-    await fetch(`${BASE}/api/ml-train`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({}) });
-    alert('Training gestartet für alle Strategien!');
-    setTimeout(renderML, 3000);
-  } catch(e) { alert('Fehler: ' + e.message); }
-}
-
-// ── Init ──────────────────────────────────────────────
-window.onload = () => {
-  const saved = localStorage.getItem('mb_url') || '';
-  if (saved) { document.getElementById('urlInput').value = saved; connect(); }
+// ─── Formatters ───────────────────────────────────────────────────────────
+const fmtUSD = (n, opts = {}) => {
+  if (n == null || isNaN(n)) return '$—';
+  const sign = n < 0 ? '-' : (opts.signed ? '+' : '');
+  const abs = Math.abs(n);
+  const dec = opts.decimals != null ? opts.decimals : (abs >= 1000 ? 0 : 2);
+  return sign + '$' + abs.toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec });
 };
-</script>
-</body>
-</html>
+const fmtPct = (n, opts = {}) => {
+  if (n == null || isNaN(n)) return '—%';
+  const sign = n < 0 ? '-' : (opts.signed ? '+' : '');
+  const dec = opts.decimals != null ? opts.decimals : 2;
+  return sign + Math.abs(n).toFixed(dec) + '%';
+};
+const fmtShort = (n) => {
+  if (n == null || isNaN(n)) return '—';
+  const a = Math.abs(n); const s = n < 0 ? '-' : '';
+  if (a >= 1e9) return s + (a/1e9).toFixed(1) + 'B';
+  if (a >= 1e6) return s + (a/1e6).toFixed(1) + 'M';
+  if (a >= 1e3) return s + (a/1e3).toFixed(1) + 'k';
+  return s + a.toFixed(0);
+};
+const fmtTime = (ts) => {
+  if (!ts) return '—';
+  const diff = Date.now() - ts;
+  if (diff < 60000) return Math.max(1, Math.floor(diff / 1000)) + 's ago';
+  if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
+  if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
+  if (diff < 7 * 86400000) return Math.floor(diff / 86400000) + 'd ago';
+  return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+};
+const fmtDateTime = (ts) => {
+  if (!ts) return '—';
+  const d = new Date(ts);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ', ' +
+    d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+};
+const fmtUptime = (ms) => {
+  if (!ms) return '0m';
+  const h = Math.floor(ms / 3600000);
+  const m = Math.floor((ms % 3600000) / 60000);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+};
+
+// ─── Icon ─────────────────────────────────────────────────────────────────
+const Icon = ({ name, size = 16 }) => {
+  const paths = {
+    dashboard: <><rect x="3" y="3" width="7" height="9" rx="1.2"/><rect x="14" y="3" width="7" height="5" rx="1.2"/><rect x="14" y="12" width="7" height="9" rx="1.2"/><rect x="3" y="16" width="7" height="5" rx="1.2"/></>,
+    strategy:  <><path d="M3 17l5-5 4 4 8-8"/><path d="M14 8h6v6"/></>,
+    history:   <><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></>,
+    bot:       <><rect x="4" y="7" width="16" height="12" rx="2"/><path d="M9 3v4"/><path d="M15 3v4"/><circle cx="9" cy="13" r="1.2"/><circle cx="15" cy="13" r="1.2"/></>,
+    settings:  <><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></>,
+    risk:      <><path d="M12 3 2 21h20L12 3z"/><path d="M12 10v4"/><path d="M12 17v.5"/></>,
+    arrowUp:   <><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></>,
+    arrowDown: <><path d="M12 5v14"/><path d="M5 12l7 7 7-7"/></>,
+    plus:      <><path d="M12 5v14"/><path d="M5 12h14"/></>,
+    pause:     <><rect x="6" y="5" width="4" height="14"/><rect x="14" y="5" width="4" height="14"/></>,
+    play:      <><path d="M6 4l14 8-14 8z" fill="currentColor" stroke="none"/></>,
+    refresh:   <><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/><path d="M3 21v-5h5"/></>,
+    download:  <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></>,
+    target:    <><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/></>,
+    bolt:      <><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></>,
+    wallet:    <><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M16 13h.01"/><path d="M3 10h18"/></>,
+    chart:     <><path d="M3 3v18h18"/><path d="M7 14l4-4 4 4 5-6"/></>,
+    activity:  <><path d="M22 12h-4l-3 9-6-18-3 9H2"/></>,
+    sun:       <><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></>,
+    moon:      <><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></>,
+    x:         <><path d="M18 6L6 18"/><path d="M6 6l12 12"/></>,
+    zap:       <><path d="M13 2 3 14h7l-1 8 10-12h-7z" fill="currentColor"/></>,
+    layers:    <><path d="M12 2 2 7l10 5 10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></>,
+    cpu:       <><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 15h3M1 9h3M1 15h3"/></>,
+    health:    <><path d="M22 12h-4l-3 9-6-18-3 9H2"/></>,
+    logs:      <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></>,
+  };
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+         strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {paths[name] || null}
+    </svg>
+  );
+};
+
+// ─── Sparkline ────────────────────────────────────────────────────────────
+function Sparkline({ data, color = 'currentColor', height = 28, width = 80 }) {
+  if (!data || data.length < 2) return null;
+  const vals = data.map(d => (typeof d === 'object' ? (d.v ?? d.equity ?? 0) : d));
+  const min = Math.min(...vals), max = Math.max(...vals);
+  const range = max - min || 1;
+  const step = width / (vals.length - 1);
+  const pts = vals.map((v, i) => `${i * step},${height - ((v - min) / range) * height}`).join(' ');
+  const lastY = height - ((vals[vals.length - 1] - min) / range) * height;
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
+      <polyline points={pts} fill="none" stroke={color} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx={(vals.length - 1) * step} cy={lastY} r="1.8" fill={color} />
+    </svg>
+  );
+}
+
+// ─── Hooks ────────────────────────────────────────────────────────────────
+function useTick(ms = 1000) {
+  const [n, setN] = useState(0);
+  useEffect(() => { const id = setInterval(() => setN(x => x + 1), ms); return () => clearInterval(id); }, [ms]);
+  return n;
+}
+function useClock() {
+  useTick(1000);
+  return new Date();
+}
+function useTweaks(defaults) {
+  const [t, setT] = useState(defaults);
+  const setTweak = useCallback((k, v) => setT(prev => ({ ...prev, [k]: v })), []);
+  return [t, setTweak];
+}
+
+// ─── LineChart ────────────────────────────────────────────────────────────
+function LineChart({ data, height = 280, color = 'var(--accent)', fill = true,
+  yFormat = v => v.toFixed(0), xFormat = t => new Date(t).toLocaleDateString('en-US', { month: 'short' }),
+  tooltipLabel = 'Value', baseline = null, negativeFill = false, axisX = true, axisY = true }) {
+  const wrapRef = useRef(null);
+  const [w, setW] = useState(800);
+  const [hover, setHover] = useState(null);
+  useEffect(() => {
+    if (!wrapRef.current) return;
+    const ro = new ResizeObserver(([e]) => setW(e.contentRect.width));
+    ro.observe(wrapRef.current);
+    return () => ro.disconnect();
+  }, []);
+  if (!data || data.length < 2) return <div ref={wrapRef} className="chart-wrap" style={{ height }} />;
+  const padL = axisY ? 54 : 8, padR = 12, padT = 12, padB = axisX ? 26 : 8;
+  const innerW = Math.max(20, w - padL - padR), innerH = height - padT - padB;
+  const xs = data.map(d => d.t), ys = data.map(d => d.v);
+  const xMin = xs[0], xMax = xs[xs.length - 1];
+  let yMin = Math.min(...ys), yMax = Math.max(...ys);
+  const yPad = (yMax - yMin) * 0.08 || 1;
+  yMin -= yPad; yMax += yPad;
+  if (baseline != null) { if (baseline < yMin) yMin = baseline - yPad; if (baseline > yMax) yMax = baseline + yPad; }
+  const xi = t => padL + ((t - xMin) / (xMax - xMin || 1)) * innerW;
+  const yi = v => padT + (1 - (v - yMin) / (yMax - yMin || 1)) * innerH;
+  const path = data.map((d, i) => `${i === 0 ? 'M' : 'L'}${xi(d.t).toFixed(1)},${yi(d.v).toFixed(1)}`).join(' ');
+  const baseY = baseline != null ? yi(baseline) : padT + innerH;
+  const areaPath = `${path} L${xi(data[data.length-1].t).toFixed(1)},${baseY.toFixed(1)} L${xi(data[0].t).toFixed(1)},${baseY.toFixed(1)} Z`;
+  const yTicks = Array.from({ length: 5 }, (_, i) => yMin + (yMax - yMin) * (i / 4));
+  const xTickCount = Math.min(6, data.length);
+  const xTicks = Array.from({ length: xTickCount }, (_, i) => data[Math.floor((data.length - 1) * (i / (xTickCount - 1)))].t);
+  const handleMove = e => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    if (mx < padL || mx > w - padR) { setHover(null); return; }
+    const t = xMin + ((mx - padL) / innerW) * (xMax - xMin);
+    let lo = 0, hi = data.length - 1;
+    while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (data[mid].t < t) lo = mid; else hi = mid; }
+    setHover(Math.abs(data[lo].t - t) < Math.abs(data[hi].t - t) ? data[lo] : data[hi]);
+  };
+  const gradId = 'g' + Math.abs(color.length * 7 + height);
+  return (
+    <div className="chart-wrap" ref={wrapRef} style={{ height }} onMouseMove={handleMove} onMouseLeave={() => setHover(null)}>
+      <svg className="chart-svg" width={w} height={height}>
+        <defs>
+          <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={color} stopOpacity="0.28"/><stop offset="100%" stopColor={color} stopOpacity="0"/>
+          </linearGradient>
+        </defs>
+        <g className="chart-grid">{yTicks.map((v, i) => <line key={i} x1={padL} x2={w-padR} y1={yi(v)} y2={yi(v)}/>)}</g>
+        {axisY && <g className="chart-axis">{yTicks.map((v,i) => <text key={i} x={padL-6} y={yi(v)} textAnchor="end" dominantBaseline="middle">{yFormat(v)}</text>)}</g>}
+        {axisX && <g className="chart-axis">{xTicks.map((t,i) => <text key={i} x={xi(t)} y={height-8} textAnchor="middle">{xFormat(t)}</text>)}</g>}
+        {baseline != null && <line x1={padL} x2={w-padR} y1={yi(baseline)} y2={yi(baseline)} stroke="var(--line-strong)" strokeWidth="1" strokeDasharray="2 3"/>}
+        {fill && <path d={areaPath} fill={negativeFill ? 'color-mix(in oklab,var(--neg) 22%,transparent)' : `url(#${gradId})`}/>}
+        <path d={path} fill="none" stroke={color} strokeWidth="1.8" strokeLinejoin="round" strokeLinecap="round"/>
+        {hover && <>
+          <line x1={xi(hover.t)} x2={xi(hover.t)} y1={padT} y2={padT+innerH} stroke="var(--line-strong)" strokeWidth="1"/>
+          <circle cx={xi(hover.t)} cy={yi(hover.v)} r="4" fill={color} stroke="var(--bg)" strokeWidth="1.5"/>
+        </>}
+      </svg>
+      {hover && (
+        <div className="chart-tooltip" style={{ left: xi(hover.t), top: yi(hover.v) }}>
+          <div className="row"><span>{tooltipLabel}</span><strong>{yFormat(hover.v)}</strong></div>
+          <div className="row faint"><span>Date</span><span>{new Date(hover.t).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'2-digit'})}</span></div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Heatmap ──────────────────────────────────────────────────────────────
+function Heatmap({ daily }) {
+  const cells = (daily || []).slice(-364);
+  const maxAbs = Math.max(...cells.map(d => Math.abs(d.v)), 1);
+  const [hover, setHover] = useState(null);
+  const color = v => {
+    if (v === 0) return 'var(--bg-elev2)';
+    const intensity = Math.min(1, Math.abs(v) / maxAbs);
+    const alpha = [0.18, 0.34, 0.55, 0.78, 1][Math.min(4, Math.floor(intensity * 5))];
+    return `color-mix(in oklab,var(${v > 0 ? '--pos' : '--neg'}) ${Math.round(alpha * 100)}%,transparent)`;
+  };
+  const grouped = [];
+  if (cells.length) { const startDay = new Date(cells[0].t).getDay(); for (let i=0;i<startDay;i++) grouped.push(null); }
+  for (const c of cells) grouped.push(c);
+  return (
+    <div className="heatmap">
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(53,1fr)', gap:3, gridAutoFlow:'column', gridTemplateRows:'repeat(7,1fr)' }}>
+        {grouped.map((c, i) => (
+          <div key={i} className="heatmap-cell"
+               style={{ background: c ? color(c.v) : 'transparent', visibility: c ? 'visible' : 'hidden' }}
+               onMouseEnter={() => c && setHover(c)} onMouseLeave={() => setHover(null)} />
+        ))}
+      </div>
+      <div className="heatmap-legend">
+        {hover ? (
+          <span className="mono">{new Date(hover.t).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}{'  '}<span className={hover.v>=0?'pos':'neg'}>{(hover.v>=0?'+':'') + '$' + Math.abs(hover.v).toFixed(0)}</span></span>
+        ) : (<><span>Less</span><div className="swatches">{['color-mix(in oklab,var(--neg) 78%,transparent)','color-mix(in oklab,var(--neg) 34%,transparent)','var(--bg-elev2)','color-mix(in oklab,var(--pos) 34%,transparent)','color-mix(in oklab,var(--pos) 78%,transparent)'].map((c,i) => <div key={i} className="swatch" style={{background:c}}/>)}</div><span>More</span></>)}
+      </div>
+    </div>
+  );
+}
+
+// ─── BarChart ─────────────────────────────────────────────────────────────
+function BarChart({ data, height=220, yFormat=v=>v.toFixed(0), colorBy='sign', fixedColor='var(--accent)' }) {
+  const wrapRef = useRef(null);
+  const [w, setW] = useState(600);
+  const [hov, setHov] = useState(null);
+  useEffect(() => {
+    if (!wrapRef.current) return;
+    const ro = new ResizeObserver(([e]) => setW(e.contentRect.width));
+    ro.observe(wrapRef.current); return () => ro.disconnect();
+  }, []);
+  if (!data?.length) return null;
+  const padL=48, padR=12, padT=12, padB=38, innerW=Math.max(20,w-padL-padR), innerH=height-padT-padB;
+  const vals = data.map(d => d.value);
+  let yMin=Math.min(0,...vals), yMax=Math.max(0,...vals);
+  const pad=(yMax-yMin)*0.1||1; if(yMax>0)yMax+=pad; if(yMin<0)yMin-=pad;
+  const yf = v => padT+(1-(v-yMin)/(yMax-yMin||1))*innerH;
+  const y0=yf(0), bw=innerW/data.length, barW=Math.min(54,bw*0.62);
+  const yTicks=Array.from({length:5},(_,i)=>yMin+(yMax-yMin)*i/4);
+  const clr = d => colorBy==='per-item' ? (d.color||fixedColor) : colorBy==='fixed' ? fixedColor : (d.value>=0?'var(--pos)':'var(--neg)');
+  return (
+    <div className="chart-wrap" ref={wrapRef} style={{height}}>
+      <svg className="chart-svg" width={w} height={height}>
+        <g className="chart-grid">{yTicks.map((v,i)=><line key={i} x1={padL} x2={w-padR} y1={yf(v)} y2={yf(v)}/>)}</g>
+        <g className="chart-axis">{yTicks.map((v,i)=><text key={i} x={padL-6} y={yf(v)} textAnchor="end" dominantBaseline="middle">{yFormat(v)}</text>)}</g>
+        <line x1={padL} x2={w-padR} y1={y0} y2={y0} stroke="var(--line-strong)" strokeWidth="1"/>
+        {data.map((d,i) => {
+          const cx=padL+bw*i+bw/2, yv=yf(d.value), top=d.value>=0?yv:y0, h=Math.max(1,Math.abs(yv-y0));
+          return <g key={i}>
+            <rect x={cx-barW/2} y={top} width={barW} height={h} fill={clr(d)} rx="2" opacity={hov===i?1:.88} onMouseEnter={()=>setHov(i)} onMouseLeave={()=>setHov(null)}/>
+            <text className="chart-axis" x={cx} y={height-22} textAnchor="middle" fill="var(--text-dim)" fontSize="11">{d.label}</text>
+            {d.sub && <text x={cx} y={height-6} textAnchor="middle" fill="var(--text-faint)" fontSize="10" fontFamily="var(--font-mono)">{d.sub}</text>}
+          </g>;
+        })}
+      </svg>
+      {hov!=null && <div className="chart-tooltip" style={{left:padL+bw*hov+bw/2,top:yf(data[hov].value)}}>
+        <div className="row"><span>{data[hov].label}</span><strong>{yFormat(data[hov].value)}</strong></div>
+      </div>}
+    </div>
+  );
+}
+
+// ─── Small components ─────────────────────────────────────────────────────
+function KpiCard({ icon, label, value, delta, deltaLabel, deltaSub, subText, spark, sparkColor }) {
+  return (
+    <div className="kpi">
+      <div className="kpi-label"><Icon name={icon}/><span>{label}</span></div>
+      <div className="kpi-value">{value}</div>
+      <div className="kpi-foot">
+        {delta != null && <span className={`kpi-delta ${delta >= 0 ? 'pos' : 'neg'}`}><Icon name={delta>=0?'arrowUp':'arrowDown'}/>{deltaLabel}</span>}
+        {deltaSub && <span className="kpi-sub">{deltaSub}</span>}
+        {subText && <span className="kpi-sub">{subText}</span>}
+      </div>
+      {spark && <div className="kpi-spark"><Sparkline data={spark} color={sparkColor} /></div>}
+    </div>
+  );
+}
+
+function RangePicker({ value, onChange, options = ['1W','1M','3M','6M','1Y','All'] }) {
+  return (
+    <div className="seg">
+      {options.map(o => <button key={o} className={o===value?'on':''} onClick={()=>onChange(o)}>{o}</button>)}
+    </div>
+  );
+}
+
+function BotStatusDot({ status }) {
+  const map = { champion:{color:'var(--accent)',label:'CHAMPION'}, active:{color:'var(--pos)',label:'ACTIVE'}, evaluating:{color:'var(--warn)',label:'EVAL'}, paused:{color:'var(--text-faint)',label:'PAUSED'}, retired:{color:'var(--neg)',label:'RETIRED'} };
+  const m = map[status] || map.active;
+  return <span className="tag" style={{background:'transparent',borderColor:m.color,color:m.color,padding:'0 5px',fontSize:9,fontWeight:700}}>{m.label}</span>;
+}
+
+function BotRow({ bot, onClick }) {
+  return (
+    <div onClick={onClick} className="bot-row"
+         style={{ display:'grid', gridTemplateColumns:'22px 1fr 70px 80px', gap:10, alignItems:'center', padding:'6px 4px', cursor:'pointer', borderRadius:4 }}>
+      <span className="mono faint" style={{fontSize:10}}>#{bot.rank}</span>
+      <div className="col" style={{gap:1,minWidth:0}}>
+        <div className="row" style={{gap:6}}>
+          <span style={{width:6,height:6,borderRadius:2,background:bot.color,flexShrink:0}}/>
+          <span style={{fontWeight:600,fontSize:12,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{bot.codename}</span>
+          <BotStatusDot status={bot.status}/>
+        </div>
+        <span className="faint" style={{fontSize:10}}>{bot.variant}</span>
+      </div>
+      <div style={{width:70}}><Sparkline data={bot.spark} color={bot.pnl>=0?'var(--pos)':'var(--neg)'} width={70} height={22}/></div>
+      <span className={`mono ${bot.pnl>=0?'pos':'neg'}`} style={{fontSize:12,fontWeight:600,textAlign:'right'}}>{fmtUSD(bot.pnl,{signed:true})}</span>
+    </div>
+  );
+}
+
+function BotCard({ bot, onClick }) {
+  return (
+    <div className="card" onClick={onClick} style={{cursor:'pointer',gap:10}}>
+      <div className="row" style={{justifyContent:'space-between',alignItems:'flex-start'}}>
+        <div className="col" style={{gap:1,minWidth:0}}>
+          <div className="row" style={{gap:6}}>
+            <span style={{width:7,height:7,borderRadius:2,background:bot.color,flexShrink:0}}/>
+            <span style={{fontWeight:700,fontSize:14}}>{bot.codename}</span>
+          </div>
+          <span className="faint mono" style={{fontSize:10}}>{bot.variant}</span>
+        </div>
+        <BotStatusDot status={bot.status}/>
+      </div>
+      <div className="row" style={{justifyContent:'space-between',alignItems:'flex-end'}}>
+        <div className="col">
+          <span className="faint" style={{fontSize:9.5,letterSpacing:'.06em',textTransform:'uppercase'}}>P&L</span>
+          <span className={`mono ${bot.pnl>=0?'pos':'neg'}`} style={{fontSize:19,fontWeight:700}}>{fmtUSD(bot.pnl,{signed:true})}</span>
+          <span className={`mono ${bot.pnl>=0?'pos':'neg'}`} style={{fontSize:10,opacity:.75}}>{fmtPct(bot.pnlPct,{signed:true})}</span>
+        </div>
+        <Sparkline data={bot.spark} color={bot.pnl>=0?'var(--pos)':'var(--neg)'} width={100} height={32}/>
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:6,fontSize:11,paddingTop:6,borderTop:'1px solid var(--line)'}}>
+        {[['Trades',bot.trades],['Win',(bot.winRate*100).toFixed(0)+'%'],['Score',bot.score],['ML',bot.mlTrainiert?'✓':'—']].map(([l,v])=>(
+          <div key={l} className="col" style={{gap:0}}>
+            <span className="faint" style={{fontSize:9.5,letterSpacing:'.06em',textTransform:'uppercase'}}>{l}</span>
+            <span className="mono">{v}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MiniMetric({ label, value, sub }) {
+  return (
+    <div className="card" style={{padding:12,gap:2}}>
+      <span className="faint" style={{fontSize:9.5,letterSpacing:'.06em',textTransform:'uppercase'}}>{label}</span>
+      <span className="mono" style={{fontSize:18,fontWeight:700}}>{value}</span>
+      {sub && <span className="faint" style={{fontSize:10}}>{sub}</span>}
+    </div>
+  );
+}
+
+function BotLeaderboard({ onSelect }) {
+  const D = window.BOT_DATA;
+  const sorted = [...D.bots].sort((a,b) => b.pnl - a.pnl);
+  const top = sorted.slice(0, Math.min(5, sorted.length));
+  const bottom = sorted.length > 5 ? sorted.slice(-Math.min(3, sorted.length - 5)).reverse() : [];
+  return (
+    <div className="card">
+      <div className="card-head">
+        <span className="card-title">Bot Leaderboard</span>
+        <span className="faint mono">{D.bots.length} bots</span>
+      </div>
+      <div className="col" style={{gap:4}}>
+        {top.map(b => <BotRow key={b.id} bot={b} onClick={() => onSelect && onSelect(b)}/>)}
+        {bottom.length > 0 && <>
+          <div className="row" style={{gap:6,padding:'6px 4px 2px',fontSize:10,color:'var(--text-faint)',textTransform:'uppercase',letterSpacing:'.06em'}}>
+            <span style={{flex:1,borderTop:'1px dashed var(--line)'}}/>
+            <span>worst</span>
+            <span style={{flex:1,borderTop:'1px dashed var(--line)'}}/>
+          </div>
+          {bottom.map(b => <BotRow key={b.id} bot={b} onClick={() => onSelect && onSelect(b)}/>)}
+        </>}
+      </div>
+    </div>
+  );
+}
+
+function FleetMix() {
+  const D = window.BOT_DATA;
+  const segs = [
+    {key:'champion',label:'Champion',count:D.bots.filter(b=>b.status==='champion').length,color:'var(--accent)'},
+    {key:'active',label:'Active',count:D.bots.filter(b=>b.status==='active').length,color:'var(--pos)'},
+    {key:'paused',label:'Paused',count:D.bots.filter(b=>b.status==='paused').length,color:'var(--text-faint)'},
+  ];
+  const total = segs.reduce((a,s)=>a+s.count,0) || 1;
+  return (
+    <div className="col" style={{gap:6}}>
+      <div style={{display:'flex',height:8,borderRadius:4,overflow:'hidden'}}>
+        {segs.filter(s=>s.count>0).map(s => <div key={s.key} style={{width:(s.count/total*100)+'%',background:s.color}} title={`${s.label}: ${s.count}`}/>)}
+      </div>
+      <div className="row" style={{gap:10,flexWrap:'wrap',fontSize:10.5}}>
+        {segs.filter(s=>s.count>0).map(s => (
+          <span key={s.key} className="row" style={{gap:5}}>
+            <span style={{width:7,height:7,borderRadius:2,background:s.color}}/>
+            <span className="faint" style={{textTransform:'uppercase',letterSpacing:'.04em'}}>{s.label}</span>
+            <span className="mono">{s.count}</span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MasterBotCard() {
+  const D = window.BOT_DATA;
+  useTick(1000);
+  const active = D.bots.filter(b => b.status !== 'paused' && b.status !== 'retired').length;
+  return (
+    <div className="card">
+      <div className="card-head">
+        <div className="row" style={{gap:10}}>
+          <span className="card-title">Master Bot</span>
+          <span className="tag live">LIVE</span>
+        </div>
+        <span className="faint mono" style={{fontSize:11}}>v3.4.2</span>
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,fontSize:12}}>
+        <div className="col" style={{gap:2}}>
+          <span className="faint" style={{fontSize:10,textTransform:'uppercase',letterSpacing:'.05em'}}>Active Bots</span>
+          <span className="mono" style={{fontSize:22,fontWeight:700}}>{active}<span className="faint" style={{fontSize:13,fontWeight:400}}> / {D.bots.length}</span></span>
+        </div>
+        <div className="col" style={{gap:2}}>
+          <span className="faint" style={{fontSize:10,textTransform:'uppercase',letterSpacing:'.05em'}}>Market Mode</span>
+          <span className="mono" style={{fontSize:14,fontWeight:600,color:'var(--accent)'}}>{D.marketMode || 'NORMAL'}</span>
+        </div>
+      </div>
+      <FleetMix/>
+    </div>
+  );
+}
+
+function BotHealth() {
+  const D = window.BOT_DATA;
+  const clock = useClock();
+  const metrics = D.metricsSnap || {};
+  return (
+    <div className="card">
+      <div className="card-head">
+        <span className="card-title">Bot Status</span>
+        <span className="row" style={{gap:6,fontSize:11}}>
+          <span className="pulse-now"/><span>Running</span>
+        </span>
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,fontSize:12}}>
+        <div className="col" style={{gap:3}}>
+          <span className="faint" style={{fontSize:10,textTransform:'uppercase',letterSpacing:'.05em'}}>Server Time</span>
+          <span className="mono">{clock.toLocaleTimeString('en-GB')}</span>
+        </div>
+        <div className="col" style={{gap:3}}>
+          <span className="faint" style={{fontSize:10,textTransform:'uppercase',letterSpacing:'.05em'}}>Uptime</span>
+          <span className="mono">{fmtUptime(metrics.uptime)}</span>
+        </div>
+        <div className="col" style={{gap:4}}>
+          <div className="row" style={{justifyContent:'space-between',fontSize:11}}>
+            <span className="faint">Signals</span>
+            <span className="mono">{metrics.signals_received||0}</span>
+          </div>
+          <div className="bar"><div style={{width:Math.min(100,((metrics.signals_received||0)/100)*100)+'%'}}/></div>
+        </div>
+        <div className="col" style={{gap:4}}>
+          <div className="row" style={{justifyContent:'space-between',fontSize:11}}>
+            <span className="faint">Latency</span>
+            <span className="mono">{metrics.avgLatency||0}ms</span>
+          </div>
+          <div className="bar"><div style={{width:Math.min(100,(metrics.avgLatency||0)/4)+'%',background:(metrics.avgLatency||0)>200?'var(--warn)':'var(--pos)'}}/></div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ActivityFeed({ events }) {
+  useTick(15000);
+  const iconFor = type => {
+    if (type==='ORDER_PLACED'||type==='trade-close') return {icon:'chart',cls:'pos'};
+    if (type==='ORDER_FAILED') return {icon:'risk',cls:'neg'};
+    if (type==='SIGNAL_RECEIVED'||type==='signal') return {icon:'bolt',cls:'acc'};
+    if (type==='RISK_REJECTED') return {icon:'risk',cls:'neg'};
+    if (type==='RISK_APPROVED') return {icon:'zap',cls:'pos'};
+    if (type==='ERROR') return {icon:'risk',cls:'neg'};
+    return {icon:'activity',cls:''};
+  };
+  return (
+    <div className="feed">
+      {(events||[]).slice(0,12).map((e,i) => {
+        const {icon,cls} = iconFor(e.type);
+        return (
+          <div className="feed-item" key={i}>
+            <div className={`feed-icon ${cls}`}><Icon name={icon} size={12}/></div>
+            <div>
+              <div className="feed-text">{e.text||e.type}</div>
+              <div className="feed-sub">{e.detail || (e.payload ? JSON.stringify(e.payload).slice(0,60) : '')}</div>
+            </div>
+            <div className="feed-time">{fmtTime(e.t||e.timestamp)}</div>
+          </div>
+        );
+      })}
+      {(!events||events.length===0) && <div style={{padding:'20px 0',textAlign:'center',color:'var(--text-faint)',fontSize:12}}>No recent events</div>}
+    </div>
+  );
+}
+// ─── Overview Screen ──────────────────────────────────────────────────────
+function OverviewScreen({ onSelectTrade, onSelectBot }) {
+  const D = window.BOT_DATA;
+  const [range, setRange] = useState('All');
+  const filterByRange = data => {
+    if (!data || !data.length) return [];
+    const lastT = data[data.length-1].t, now = Date.now();
+    const cutoff = {  '1W':7,'1M':30,'3M':90,'6M':180,'1Y':365,'All':99999 }[range]||99999;
+    return data.filter(d => d.t >= now - cutoff*86400000);
+  };
+  const equity = filterByRange(D.equity);
+  const drawdown = filterByRange(D.drawdown);
+  const sparkEq = D.equity.slice(-30);
+  const totalPnl = D.metrics.totalPnl;
+  const totalPnlPct = D.metrics.totalEquity > 0 ? (totalPnl / D.metrics.totalEquity) * 100 : 0;
+
+  return (<>
+    <div className="kpi-grid">
+      <KpiCard icon="wallet" label="Portfolio Value" value={fmtUSD(D.metrics.totalEquity)}
+        delta={totalPnl} deltaLabel={fmtUSD(totalPnl,{signed:true})} deltaSub="all time"
+        spark={sparkEq} sparkColor="var(--accent)"/>
+      <KpiCard icon="chart" label="Total P&L" value={fmtUSD(totalPnl,{signed:true})}
+        delta={totalPnl} deltaLabel={fmtPct(totalPnlPct,{signed:true,decimals:1})} deltaSub="since inception"
+        spark={sparkEq.map((d,i,a)=>({t:d.t,v:d.v-(a[0]?.v||0)}))} sparkColor={totalPnl>=0?'var(--pos)':'var(--neg)'}/>
+      <KpiCard icon="target" label="Win Rate" value={fmtPct(D.metrics.avgWinRate*100,{decimals:1})}
+        subText={`${D.metrics.totalTrades} total trades`} spark={sparkEq.map(d=>({t:d.t,v:d.v}))} sparkColor="var(--pos)"/>
+      <KpiCard icon="bot" label="Active Bots" value={D.bots.filter(b=>b.status!=='paused').length+''}
+        subText={`of ${D.bots.length} strategies`} spark={null}/>
+    </div>
+    <div className="grid-equity">
+      <div className="card">
+        <div className="card-head">
+          <div className="row" style={{gap:12}}>
+            <span className="card-title">Equity Curve</span>
+            <span className="tag live">LIVE</span>
+          </div>
+          <RangePicker value={range} onChange={setRange}/>
+        </div>
+        <LineChart data={equity.length>=2?equity:[{t:Date.now()-86400000,v:D.metrics.totalEquity},{t:Date.now(),v:D.metrics.totalEquity}]}
+          height={300} color="var(--accent)" yFormat={v=>'$'+fmtShort(v)} tooltipLabel="Equity"/>
+      </div>
+      <div className="col" style={{gap:'var(--pad)'}}>
+        <MasterBotCard/>
+        <BotHealth/>
+      </div>
+    </div>
+    <div className="grid-2">
+      <div className="card">
+        <div className="card-head">
+          <span className="card-title">Drawdown</span>
+        </div>
+        <LineChart data={drawdown.length>=2?drawdown:[{t:Date.now()-86400000,v:0},{t:Date.now(),v:0}]}
+          height={220} color="var(--neg)" yFormat={v=>v.toFixed(1)+'%'} tooltipLabel="Drawdown" baseline={0} negativeFill={true}/>
+      </div>
+      <div className="card">
+        <div className="card-head">
+          <span className="card-title">Daily P&L</span>
+          <span className="faint mono">{D.dailyPnl.filter(d=>d.v>0).length} green days</span>
+        </div>
+        <Heatmap daily={D.dailyPnl}/>
+      </div>
+    </div>
+    <div className="grid-bottom">
+      <BotLeaderboard onSelect={onSelectBot}/>
+      <div className="card">
+        <div className="card-head">
+          <span className="card-title">Activity</span>
+        </div>
+        <ActivityFeed events={D.events}/>
+      </div>
+    </div>
+  </>);
+}
+
+// ─── Fleet Screen ─────────────────────────────────────────────────────────
+function FleetScreen({ onSelectBot }) {
+  const D = window.BOT_DATA;
+  const [filter, setFilter] = useState('all');
+  const [view, setView] = useState('grid');
+  const [sort, setSort] = useState('pnl');
+  const filtered = D.bots.filter(b => filter==='all' || b.status===filter);
+  const sorted = [...filtered].sort((a,b) => {
+    if(sort==='pnl') return b.pnl-a.pnl;
+    if(sort==='winrate') return b.winRate-a.winRate;
+    if(sort==='score') return (b.score||0)-(a.score||0);
+    return 0;
+  });
+  return (<>
+    <div className="card" style={{padding:'calc(var(--pad) - 4px) var(--pad)'}}>
+      <div className="row" style={{gap:20,alignItems:'center',flexWrap:'wrap'}}>
+        <div className="row" style={{gap:12,alignItems:'center'}}>
+          <div style={{width:38,height:38,borderRadius:8,background:'var(--accent)',display:'grid',placeItems:'center',color:'var(--bg)'}}>
+            <Icon name="cpu" size={20}/>
+          </div>
+          <div className="col" style={{gap:1}}>
+            <div className="row" style={{gap:8}}>
+              <span style={{fontWeight:700,fontSize:15}}>Master Bot</span>
+              <span className="tag live">ORCHESTRATING</span>
+            </div>
+            <span className="faint mono" style={{fontSize:11}}>Market: {D.marketMode||'NORMAL'} · {D.bots.length} strategies</span>
+          </div>
+        </div>
+        <div className="spacer"/>
+        <div className="row" style={{gap:24}}>
+          {[['Active',D.bots.filter(b=>b.status!=='paused').length,'var(--accent)'],
+            ['Paused',D.bots.filter(b=>b.status==='paused').length,'var(--text-faint)'],
+            ['Total P&L',fmtUSD(D.metrics.totalPnl,{signed:true}),'var(--pos)']
+          ].map(([l,v,c]) => (
+            <div key={l} className="col" style={{gap:1}}>
+              <span className="faint" style={{fontSize:10,textTransform:'uppercase',letterSpacing:'.06em'}}>{l}</span>
+              <span className="mono" style={{fontSize:18,fontWeight:700,color:c}}>{v}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+    <div className="row" style={{gap:10,flexWrap:'wrap',alignItems:'center'}}>
+      <RangePicker value={filter} onChange={setFilter} options={['all','champion','active','paused']}/>
+      <span className="faint mono" style={{fontSize:11}}>{sorted.length} of {D.bots.length} bots</span>
+      <div className="spacer"/>
+      <RangePicker value={sort} onChange={setSort} options={['pnl','winrate','score']}/>
+      <RangePicker value={view} onChange={setView} options={['grid','table']}/>
+    </div>
+    {view==='grid' ? (
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:'var(--pad)'}}>
+        {sorted.map(b => <BotCard key={b.id} bot={b} onClick={() => onSelectBot && onSelectBot(b)}/>)}
+      </div>
+    ) : (
+      <div className="card" style={{padding:0}}>
+        <table className="tbl">
+          <thead><tr>
+            <th>#</th><th>Strategy</th><th>Status</th>
+            <th style={{textAlign:'right'}}>Trades</th>
+            <th style={{textAlign:'right'}}>Win Rate</th>
+            <th style={{textAlign:'right'}}>Score</th>
+            <th>7d</th>
+            <th style={{textAlign:'right'}}>P&L</th>
+          </tr></thead>
+          <tbody>{sorted.map(b => (
+            <tr key={b.id} onClick={() => onSelectBot && onSelectBot(b)}>
+              <td className="mono faint">{b.rank}</td>
+              <td><div className="col" style={{gap:0}}>
+                <div className="row" style={{gap:6}}><span style={{width:7,height:7,borderRadius:2,background:b.color}}/><span style={{fontWeight:600}}>{b.codename}</span></div>
+                <span className="faint" style={{fontSize:10}}>{b.variant}</span>
+              </div></td>
+              <td><BotStatusDot status={b.status}/></td>
+              <td className="num mono">{b.trades}</td>
+              <td className="num mono">{(b.winRate*100).toFixed(1)}%</td>
+              <td className="num mono" style={{color:'var(--accent)'}}>{b.score||0}</td>
+              <td style={{width:80,padding:'4px 8px'}}><Sparkline data={b.spark} color={b.pnl>=0?'var(--pos)':'var(--neg)'} width={70} height={20}/></td>
+              <td className={`num mono ${b.pnl>=0?'pos':'neg'}`}>{fmtUSD(b.pnl,{signed:true})}</td>
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
+    )}
+  </>);
+}
+
+// ─── Strategies Screen ────────────────────────────────────────────────────
+function StrategiesScreen({ onSelectTrade }) {
+  const D = window.BOT_DATA;
+  const [active, setActive] = useState('all');
+  const compareData = D.bots.map(b => ({ label: b.codename.split('-')[0]||b.codename, value: Math.round(b.pnl), color: b.color, sub: (b.winRate*100).toFixed(0)+'%' }));
+  const selected = active === 'all' ? null : D.bots.find(b => b.id === active);
+  const tradesForSel = active === 'all' ? D.trades : D.trades.filter(t => t.strategy === active || t.strategyName === (selected?.codename));
+  return (<>
+    <div className="strategy-tabs">
+      <button className={`strategy-tab ${active==='all'?'on':''}`} onClick={() => setActive('all')}>
+        <span className="dot" style={{background:'var(--accent)'}}/> All Strategies
+        <span className="faint mono" style={{fontSize:11}}>{D.trades.length}</span>
+      </button>
+      {D.bots.map(b => (
+        <button key={b.id} className={`strategy-tab ${active===b.id?'on':''}`} onClick={() => setActive(b.id)}>
+          <span className="dot" style={{background:b.color}}/>{b.codename}
+          <span className="faint mono" style={{fontSize:11}}>{b.trades}</span>
+        </button>
+      ))}
+    </div>
+    {selected ? (
+      <div className="kpi-grid">
+        <KpiCard icon="chart" label="Total P&L" value={fmtUSD(selected.pnl,{signed:true})} delta={selected.pnl} deltaLabel={fmtPct(selected.pnlPct,{signed:true,decimals:1})} deltaSub="return"/>
+        <KpiCard icon="target" label="Win Rate" value={fmtPct(selected.winRate*100,{decimals:1})} subText={`${selected.wins} W / ${selected.losses} L`}/>
+        <KpiCard icon="zap" label="Score" value={selected.score+''} subText={selected.score>=70?'Champion':selected.score>=50?'Active':'Watch'}/>
+        <KpiCard icon="layers" label="ML Status" value={selected.mlTrainiert?'Trained':'Not trained'} subText={selected.mlTrainiert?`Acc: ${((selected.mlAccuracy||0)*100).toFixed(1)}%`:selected.variant}/>
+      </div>
+    ) : (
+      <div className="kpi-grid">
+        <KpiCard icon="chart" label="Combined P&L" value={fmtUSD(D.metrics.totalPnl,{signed:true})} subText={`${D.trades.length} trades`}/>
+        <KpiCard icon="target" label="Avg Win Rate" value={fmtPct(D.metrics.avgWinRate*100,{decimals:1})} subText={`${D.bots.length} strategies live`}/>
+        <KpiCard icon="zap" label="Best Strategy" value={D.bots[0]?.codename||'—'} subText={fmtUSD(D.bots[0]?.pnl||0,{signed:true})}/>
+        <KpiCard icon="risk" label="Weakest" value={D.bots[D.bots.length-1]?.codename||'—'} subText={fmtUSD(D.bots[D.bots.length-1]?.pnl||0,{signed:true})}/>
+      </div>
+    )}
+    <div className="card">
+      <div className="card-head">
+        <span className="card-title">P&L by Strategy</span>
+      </div>
+      <BarChart data={compareData} colorBy="per-item" yFormat={v=>'$'+fmtShort(v)} height={240}/>
+    </div>
+    <div className="card">
+      <div className="card-head">
+        <span className="card-title">Strategy Roster</span>
+      </div>
+      <table className="tbl">
+        <thead><tr>
+          <th>Strategy</th><th>Asset</th>
+          <th style={{textAlign:'right'}}>Trades</th><th style={{textAlign:'right'}}>Win Rate</th>
+          <th style={{textAlign:'right'}}>Score</th><th style={{textAlign:'right'}}>P&L</th>
+          <th>ML</th><th>Status</th>
+        </tr></thead>
+        <tbody>{D.bots.map(b => (
+          <tr key={b.id} onClick={() => setActive(b.id)} className={active===b.id?'selected':''}>
+            <td><div className="row" style={{gap:8}}><span style={{width:8,height:8,borderRadius:2,background:b.color}}/><strong>{b.codename}</strong></div></td>
+            <td><span className="tag">XAUUSD</span></td>
+            <td className="num mono">{b.trades}</td>
+            <td className="num mono">{(b.winRate*100).toFixed(1)}%</td>
+            <td className="num mono" style={{color:'var(--accent)'}}>{b.score||0}</td>
+            <td className={`num mono ${b.pnl>=0?'pos':'neg'}`}>{fmtUSD(b.pnl,{signed:true})}</td>
+            <td><span style={{fontSize:11,color:b.mlTrainiert?'var(--pos)':'var(--text-faint)'}}>{b.mlTrainiert?`✓ ${((b.mlAccuracy||0)*100).toFixed(0)}%`:'—'}</span></td>
+            <td><BotStatusDot status={b.status}/></td>
+          </tr>
+        ))}</tbody>
+      </table>
+    </div>
+  </>);
+}
+
+// ─── History Screen ───────────────────────────────────────────────────────
+function HistoryScreen({ onSelectTrade }) {
+  const D = window.BOT_DATA;
+  const [filter, setFilter] = useState('all');
+  const [strategy, setStrategy] = useState('all');
+  const [page, setPage] = useState(0);
+  const PER = 25;
+  const filtered = D.trades.filter(t => {
+    if (filter==='wins' && t.pnl<=0) return false;
+    if (filter==='losses' && t.pnl>0) return false;
+    if (strategy!=='all' && t.strategy!==strategy && t.strategyName!==strategy) return false;
+    return true;
+  });
+  const pages = Math.max(1, Math.ceil(filtered.length / PER));
+  const slice = filtered.slice(page*PER, (page+1)*PER);
+  const sumPnl = filtered.reduce((a,t)=>a+t.pnl,0);
+  const wins = filtered.filter(t=>t.pnl>0).length;
+  return (<>
+    <div className="card">
+      <div className="card-head">
+        <div className="row" style={{gap:14,flexWrap:'wrap'}}>
+          <span className="card-title">Trade History</span>
+          <span className="faint mono">{filtered.length} trades</span>
+          <span className="faint">·</span>
+          <span className="mono"><span className="pos">{wins} W</span> / <span className="neg">{filtered.length-wins} L</span></span>
+          <span className="faint">·</span>
+          <span className={`mono ${sumPnl>=0?'pos':'neg'}`}>Net {fmtUSD(sumPnl,{signed:true})}</span>
+        </div>
+        <div className="row" style={{gap:8,flexWrap:'wrap'}}>
+          <RangePicker value={filter} onChange={v=>{setFilter(v);setPage(0);}} options={['all','wins','losses']}/>
+          <select className="tb-btn" value={strategy} onChange={e=>{setStrategy(e.target.value);setPage(0);}}>
+            <option value="all">All strategies</option>
+            {D.bots.map(b => <option key={b.id} value={b.id}>{b.codename}</option>)}
+          </select>
+        </div>
+      </div>
+      <table className="tbl">
+        <thead><tr>
+          <th>#</th><th>Date</th><th>Pair</th><th>Strategy</th><th>Side</th>
+          <th style={{textAlign:'right'}}>Entry</th><th style={{textAlign:'right'}}>Exit</th>
+          <th style={{textAlign:'right'}}>P&L</th>
+        </tr></thead>
+        <tbody>{slice.map((t,i) => (
+          <tr key={i} onClick={() => onSelectTrade && onSelectTrade(t)}>
+            <td className="mono dim">{t.id||i+1}</td>
+            <td className="mono dim">{fmtDateTime(t.entry||t.closeTime||Date.now())}</td>
+            <td><strong>{t.pair||'XAUUSD'}</strong></td>
+            <td><div className="row" style={{gap:6}}>
+              <span style={{width:7,height:7,borderRadius:2,background:D.bots.find(b=>b.codename===t.strategyName||b.id===t.strategy)?.color||'var(--accent)'}}/>
+              <span style={{fontSize:12}}>{t.strategyName||t.strategy||'—'}</span>
+            </div></td>
+            <td><span className={`tag ${(t.side||'').toLowerCase()==='buy'||t.side==='LONG'?'long':'short'}`}>{t.side||'—'}</span></td>
+            <td className="num mono">{t.entryPx||t.entry||'—'}</td>
+            <td className="num mono">{t.exitPx||t.exit||'—'}</td>
+            <td className={`num ${t.pnl>=0?'pos':'neg'}`}>
+              {fmtUSD(t.pnl,{signed:true})}
+              {t.pnlPct!=null && <span className="faint" style={{fontSize:10,marginLeft:4}}>{fmtPct(t.pnlPct,{signed:true})}</span>}
+            </td>
+          </tr>
+        ))}</tbody>
+      </table>
+      <div className="row" style={{justifyContent:'space-between',paddingTop:8}}>
+        <span className="faint mono" style={{fontSize:11}}>Showing {page*PER+1}–{Math.min((page+1)*PER,filtered.length)} of {filtered.length}</span>
+        <div className="row" style={{gap:4}}>
+          <button className="tb-btn" disabled={page===0} onClick={()=>setPage(p=>Math.max(0,p-1))}>‹ Prev</button>
+          <span className="mono dim" style={{fontSize:11,padding:'0 8px'}}>{page+1} / {pages}</span>
+          <button className="tb-btn" disabled={page>=pages-1} onClick={()=>setPage(p=>Math.min(pages-1,p+1))}>Next ›</button>
+        </div>
+      </div>
+    </div>
+  </>);
+}
+
+// ─── Decision Trace Screen ───────────────────────────────────────────────
+function DecisionTraceScreen() {
+  const [decisions, setDecisions] = useState([]);
+  const [selected, setSelected] = useState(null);
+  const [search, setSearch] = useState('');
+  const [filterOutcome, setFilterOutcome] = useState('all');
+  const [loading, setLoading] = useState(true);
+
+  const buildDecisions = useCallback((events) => {
+    if (!Array.isArray(events) || events.length === 0) return [];
+    const groups = {};
+    for (const e of events) {
+      const cid = e.correlationId || e.payload?.correlationId;
+      if (!cid) continue;
+      if (!groups[cid]) groups[cid] = { correlationId: cid, steps: [] };
+      groups[cid].steps.push(e);
+    }
+    return Object.values(groups).map(g => {
+      const steps = g.steps.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+      const first = steps[0], last = steps[steps.length - 1];
+      const hasOrder = steps.some(s => s.type === 'ORDER_PLACED');
+      const hasRejection = steps.some(s => s.type === 'RISK_REJECTED' || s.type === 'ORDER_FAILED');
+      const outcome = hasOrder ? 'EXECUTED' : hasRejection ? 'REJECTED' : 'PENDING';
+      const pair = first.payload?.pair || first.payload?.symbol || 'XAUUSD';
+      const side = first.payload?.side || '';
+      const strategy = first.payload?.strategie || first.payload?.strategy || '—';
+      const durationMs = Math.max(0, (last.timestamp || 0) - (first.timestamp || 0));
+      return { correlationId: g.correlationId, ts: first.timestamp || 0, pair, side, strategy, outcome, durationMs, steps };
+    }).sort((a, b) => (b.ts || 0) - (a.ts || 0));
+  }, []);
+
+  useEffect(() => {
+    setLoading(true);
+    fetch('/api/audit')
+      .then(r => r.ok ? r.json() : [])
+      .then(data => {
+        const arr = Array.isArray(data) ? data : (data?.events || []);
+        const decs = buildDecisions(arr);
+        setDecisions(decs);
+        if (decs.length > 0) setSelected(decs[0]);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [buildDecisions]);
+
+  const filtered = useMemo(() => decisions.filter(d => {
+    if (filterOutcome !== 'all' && d.outcome !== filterOutcome) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      return d.correlationId.toLowerCase().includes(q) ||
+             d.pair.toLowerCase().includes(q) ||
+             d.strategy.toLowerCase().includes(q);
+    }
+    return true;
+  }), [decisions, filterOutcome, search]);
+
+  const counts = {
+    executed: decisions.filter(d => d.outcome === 'EXECUTED').length,
+    rejected: decisions.filter(d => d.outcome === 'REJECTED').length,
+    pending:  decisions.filter(d => d.outcome === 'PENDING').length,
+  };
+  const sorted = decisions.slice().sort((a, b) => b.durationMs - a.durationMs);
+  const p99ms = sorted[Math.floor(sorted.length * 0.01)]?.durationMs || 0;
+
+  const evtDot = type => {
+    if (['ORDER_PLACED','PNL_RECORDED','RISK_APPROVED'].includes(type)) return 'pos';
+    if (['ORDER_FAILED','RISK_REJECTED','ERROR'].includes(type)) return 'neg';
+    if (['SIGNAL_RECEIVED','SIGNAL_ENRICHED'].includes(type)) return 'acc';
+    if (['POSITION_SIZING','RISK_SIZED'].includes(type)) return 'warn';
+    return '';
+  };
+
+  return (
+    <div className="dt-root">
+      <div className="dt-header">
+        {[['Total', decisions.length],['Executed', counts.executed],['Rejected', counts.rejected],['p99', p99ms+'ms']].map(([l,v]) => (
+          <div key={l} className="dt-header-stat">
+            <div className="val">{v}</div>
+            <div className="lbl">{l}</div>
+          </div>
+        ))}
+      </div>
+      <div className="dt-filterbar">
+        <input placeholder="Search correlationId, pair, strategy…" value={search} onChange={e => setSearch(e.target.value)}/>
+        <select value={filterOutcome} onChange={e => setFilterOutcome(e.target.value)}>
+          <option value="all">All outcomes</option>
+          <option value="EXECUTED">Executed</option>
+          <option value="REJECTED">Rejected</option>
+          <option value="PENDING">Pending</option>
+        </select>
+        <span className="faint mono" style={{fontSize:10}}>{filtered.length} decisions</span>
+      </div>
+      {loading ? (
+        <div className="dt-empty">Loading audit trail…</div>
+      ) : decisions.length === 0 ? (
+        <div className="dt-empty" style={{flexDirection:'column',gap:8}}>
+          <Icon name="layers" size={28}/>
+          <span>No decisions traced yet.</span>
+          <span style={{fontSize:11}}>Events appear once trades are processed through the system.</span>
+        </div>
+      ) : (
+        <div className="dt-split">
+          <div className="dt-list">
+            {filtered.slice(0, 200).map(d => (
+              <div key={d.correlationId}
+                   className={`dt-row${selected?.correlationId === d.correlationId ? ' sel' : ''}`}
+                   onClick={() => setSelected(d)}>
+                <div className={`dt-row-bar ${d.outcome}`}/>
+                <div className="dt-row-body">
+                  <div className="row" style={{gap:5,marginBottom:3,flexWrap:'wrap'}}>
+                    <span style={{fontWeight:600,fontSize:12}}>{d.pair}</span>
+                    {d.side && <span className={`tag ${d.side.toLowerCase()==='buy'||d.side==='LONG'?'long':'short'}`} style={{fontSize:8,padding:'0 4px'}}>{d.side}</span>}
+                    <span className={`dt-pill ${d.outcome}`}>{d.outcome}</span>
+                  </div>
+                  <div className="faint mono" style={{fontSize:10}}>{d.correlationId.slice(0,22)}…</div>
+                  <div className="faint" style={{fontSize:10,marginTop:2}}>{d.strategy} · {d.steps.length} steps · {new Date(d.ts).toLocaleTimeString('en-GB')}</div>
+                </div>
+                <div className="dt-row-dur">{d.durationMs > 0 ? d.durationMs+'ms' : '—'}</div>
+              </div>
+            ))}
+          </div>
+          <div className="dt-trace">
+            {!selected ? (
+              <div className="dt-empty">Select a decision to view its trace</div>
+            ) : (
+              <>
+                <div style={{marginBottom:12}}>
+                  <div className="row" style={{gap:8,marginBottom:4,flexWrap:'wrap'}}>
+                    <span style={{fontWeight:700,fontSize:16}}>{selected.pair}</span>
+                    {selected.side && <span className={`tag ${selected.side.toLowerCase()==='buy'||selected.side==='LONG'?'long':'short'}`}>{selected.side}</span>}
+                    <span className={`dt-pill ${selected.outcome}`}>{selected.outcome}</span>
+                  </div>
+                  <div className="faint mono" style={{fontSize:10}}>{selected.correlationId}</div>
+                </div>
+                <div className="dt-meta-grid" style={{marginBottom:16}}>
+                  {[['Strategy',selected.strategy],['Steps',selected.steps.length+' events'],['Duration',selected.durationMs+'ms'],['Time',new Date(selected.ts).toLocaleTimeString('en-GB')]].map(([l,v]) => (
+                    <div key={l} className="dt-meta-cell">
+                      <div style={{fontSize:9,textTransform:'uppercase',letterSpacing:'.05em',color:'var(--text-faint)',marginBottom:3}}>{l}</div>
+                      <div style={{fontFamily:'var(--font-mono)',fontSize:12,fontWeight:600}}>{v}</div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{fontSize:10,textTransform:'uppercase',letterSpacing:'.06em',color:'var(--text-faint)',marginBottom:8,fontWeight:600}}>Decision Timeline</div>
+                <div className="dt-timeline">
+                  {selected.steps.map((s, i) => (
+                    <div key={i} className="dt-evt">
+                      <span className="faint mono" style={{fontSize:10}}>{s.timestamp ? new Date(s.timestamp).toLocaleTimeString('en-GB') : '—'}</span>
+                      <div><div className={`dt-evt-dot ${evtDot(s.type)}`}/></div>
+                      <div>
+                        <div style={{fontWeight:600,fontSize:11,marginBottom:2}}>{s.type || 'EVENT'}</div>
+                        <div className="faint" style={{fontSize:10,lineHeight:1.4}}>
+                          {s.source || s.stream || ''}
+                          {s.payload ? (' · ' + (s.payload.strategie || s.payload.side || s.payload.pair || JSON.stringify(s.payload).slice(0, 70))) : ''}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Event Stream Screen ──────────────────────────────────────────────────
+function EventStreamScreen({ liveEvents }) {
+  const [paused, setPaused] = useState(false);
+  const [levelFilter, setLevelFilter] = useState('all');
+  const [search, setSearch] = useState('');
+  const [expanded, setExpanded] = useState(null);
+  const [audit, setAudit] = useState([]);
+
+  useEffect(() => {
+    fetch('/api/audit')
+      .then(r => r.ok ? r.json() : [])
+      .then(data => setAudit(Array.isArray(data) ? data : (data?.events || [])))
+      .catch(() => {});
+  }, []);
+
+  const levelOf = e => {
+    if (['ERROR','ORDER_FAILED'].includes(e.type)) return 'error';
+    if (['RISK_REJECTED'].includes(e.type)) return 'warn';
+    if (['ORDER_PLACED','RISK_APPROVED','PNL_RECORDED','SIGNAL_RECEIVED'].includes(e.type)) return 'info';
+    return 'debug';
+  };
+
+  const allEvents = useMemo(() => {
+    const live = paused ? [] : liveEvents;
+    const combined = [...live, ...audit].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    const seen = new Set();
+    return combined.filter(e => {
+      const k = e.id || (e.type + '|' + e.timestamp + '|' + e.source);
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  }, [liveEvents, audit, paused]);
+
+  const filtered = useMemo(() => allEvents.filter(e => {
+    if (levelFilter !== 'all' && levelOf(e) !== levelFilter) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      return (e.type || '').toLowerCase().includes(q) ||
+             (e.source || '').toLowerCase().includes(q) ||
+             (e.correlationId || '').toLowerCase().includes(q) ||
+             JSON.stringify(e.payload || {}).toLowerCase().includes(q);
+    }
+    return true;
+  }), [allEvents, levelFilter, search]);
+
+  const errCount  = allEvents.filter(e => levelOf(e) === 'error').length;
+  const warnCount = allEvents.filter(e => levelOf(e) === 'warn').length;
+
+  return (
+    <div style={{display:'flex',flexDirection:'column',gap:10}}>
+      <div className="card" style={{padding:'10px 14px',flexDirection:'row',flexWrap:'wrap',alignItems:'center',gap:8}}>
+        <input
+          placeholder="Search type, source, correlationId, payload…"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          style={{background:'var(--bg-elev2)',border:'1px solid var(--line)',borderRadius:'var(--radius-sm)',color:'var(--text)',font:'inherit',fontSize:11,padding:'5px 9px',flex:'1 1 180px',minWidth:160}}
+        />
+        <div className="seg">
+          {['all','error','warn','info','debug'].map(l => (
+            <button key={l} className={levelFilter===l?'on':''} onClick={()=>setLevelFilter(l)}>{l}</button>
+          ))}
+        </div>
+        <button className="tb-btn" onClick={() => setPaused(p => !p)}>
+          <Icon name={paused?'play':'pause'}/>{paused ? 'Resume' : 'Pause'}
+        </button>
+        <span className="faint mono" style={{fontSize:10,whiteSpace:'nowrap'}}>{filtered.length} events</span>
+        {errCount > 0 && <span className="lv-badge error">{errCount} err</span>}
+        {warnCount > 0 && <span className="lv-badge warn">{warnCount} warn</span>}
+      </div>
+      <div className="card" style={{padding:0}}>
+        <div style={{display:'grid',gridTemplateColumns:'80px 60px 150px 1fr 100px',gap:8,padding:'6px 12px',borderBottom:'1px solid var(--line)',fontSize:9,fontWeight:600,color:'var(--text-faint)',textTransform:'uppercase',letterSpacing:'.05em'}}>
+          <span>Time</span><span>Level</span><span>Type</span><span>Source · Payload</span><span>Corr. ID</span>
+        </div>
+        <div className="es-event-list">
+          {filtered.slice(0, 500).map((e, i) => {
+            const lvl = levelOf(e);
+            const isExp = expanded === i;
+            return (
+              <React.Fragment key={i}>
+                <div className={`es-evt${isExp?' expanded':''}`} onClick={() => setExpanded(isExp ? null : i)}>
+                  <span className="faint">{e.timestamp ? new Date(e.timestamp).toLocaleTimeString('en-GB') : '—'}</span>
+                  <span><span className={`lv-badge ${lvl}`}>{lvl}</span></span>
+                  <span style={{fontWeight:600,color:'var(--text)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{e.type || '—'}</span>
+                  <span className="faint" style={{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{e.source||''} {e.payload ? JSON.stringify(e.payload).slice(0, 80) : ''}</span>
+                  <span className="faint" style={{fontSize:9,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{(e.correlationId || '').slice(0, 12)}</span>
+                </div>
+                {isExp && (
+                  <div className="es-detail">
+                    {JSON.stringify({type:e.type,source:e.source,stream:e.stream,correlationId:e.correlationId,timestamp:e.timestamp,payload:e.payload}, null, 2)}
+                  </div>
+                )}
+              </React.Fragment>
+            );
+          })}
+          {filtered.length === 0 && (
+            <div style={{padding:'40px 16px',textAlign:'center',color:'var(--text-faint)',fontSize:12}}>
+              {allEvents.length === 0 ? 'No events captured yet. Connect WebSocket or trigger a signal.' : 'No events match current filters.'}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── System Health Screen ─────────────────────────────────────────────────
+function SystemHealthScreen({ wsStatus }) {
+  const D = window.BOT_DATA;
+  const [sigGen, setSigGen] = useState(null);
+  const [audit, setAudit] = useState([]);
+  useEffect(() => {
+    fetch('/api/signal-generator').then(r => r.ok ? r.json() : null).then(d => d && setSigGen(d)).catch(() => {});
+    fetch('/api/audit').then(r => r.ok ? r.json() : null).then(d => d && setAudit(Array.isArray(d) ? d : [])).catch(() => {});
+  }, []);
+  const circuits = D.circuits || {};
+  const metrics = D.metricsSnap || {};
+  const dedup = D.dedup || {};
+
+  const cpu = metrics.cpu || 0;
+  const mem = metrics.memory || metrics.mem || 0;
+  const heapUsed = metrics.heap_used_mb || 0;
+  const heapTotal = metrics.heap_total_mb || 128;
+
+  const services = [
+    { name:'WebSocket',   status: wsStatus==='connected'?'ok':'warn', latency:metrics.avgLatency||0, count:metrics.signals_received||0, cat:'transport' },
+    { name:'Risk Engine', status: (metrics.risk_rejected||0)>10 ? 'warn' : 'ok', latency:0, count:(metrics.orders_placed||0)+(metrics.risk_rejected||0), cat:'risk' },
+    { name:'Event Bus',   status:'ok', latency:0, count:audit.length, cat:'messaging' },
+    { name:'ML Service',  status:'unknown', latency:0, count:0, cat:'ml' },
+    { name:'Signal Gen',  status:sigGen?.running?'ok':'off', latency:0, count:sigGen?.signalsGenerated||0, cat:'signals' },
+  ];
+  const statusDot = s => s==='ok'?'var(--pos)':s==='warn'?'var(--warn)':s==='off'||s==='unknown'?'var(--text-faint)':'var(--neg)';
+
+  const gauge = (val, max = 100) => {
+    const pct = Math.min(100, Math.max(0, (val / max) * 100));
+    const color = pct > 85 ? 'var(--neg)' : pct > 65 ? 'var(--warn)' : 'var(--pos)';
+    return <div className="sh-gauge"><div className="sh-gauge-fill" style={{width:pct+'%',background:color}}/></div>;
+  };
+
+  const ebByType = audit.reduce((acc, e) => { acc[e.type] = (acc[e.type]||0)+1; return acc; }, {});
+
+  return (<>
+    <div className="kpi-grid">
+      {[['Signals', metrics.signals_received||0, 'bolt'],
+        ['Orders',  metrics.orders_placed||0, 'chart'],
+        ['Rejected', metrics.risk_rejected||0, 'risk'],
+        ['Errors',  metrics.errors||0, 'risk']].map(([l,v,ic]) => (
+        <div key={l} className="kpi">
+          <div className="kpi-label"><Icon name={ic}/><span>{l}</span></div>
+          <div className="kpi-value">{v}</div>
+        </div>
+      ))}
+    </div>
+    <div className="card">
+      <div className="card-head"><span className="card-title">Services</span></div>
+      <table className="sh-svc-table">
+        <thead><tr><th>Service</th><th>Status</th><th>Category</th><th>Latency</th><th>Events</th></tr></thead>
+        <tbody>
+          {services.map((s, i) => (
+            <tr key={i}>
+              <td style={{fontWeight:500}}>{s.name}</td>
+              <td><span style={{display:'inline-flex',alignItems:'center',gap:6}}>
+                <span style={{width:7,height:7,borderRadius:'50%',background:statusDot(s.status),flexShrink:0}}/>
+                <span style={{fontSize:11}}>{s.status}</span>
+              </span></td>
+              <td><span className="faint">{s.cat}</span></td>
+              <td className="mono faint">{s.latency > 0 ? s.latency+'ms' : '—'}</td>
+              <td className="mono">{s.count}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+    <div className="grid-2">
+      <div className="card">
+        <div className="card-head"><span className="card-title">Resources</span></div>
+        <div className="sh-res-grid">
+          {[['CPU', cpu, 100, '%'],['Memory', mem, 100, '%'],['Heap', heapUsed, heapTotal||128, 'MB']].map(([l,v,max,unit]) => (
+            <div key={l} className="sh-res-card">
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline'}}>
+                <span style={{fontSize:10,textTransform:'uppercase',letterSpacing:'.05em',color:'var(--text-faint)'}}>{l}</span>
+                <span className="mono" style={{fontSize:14,fontWeight:700}}>{v>0?v.toFixed(1)+unit:'—'}</span>
+              </div>
+              {gauge(v, max)}
+            </div>
+          ))}
+          <div className="sh-res-card">
+            <div style={{fontSize:10,textTransform:'uppercase',letterSpacing:'.05em',color:'var(--text-faint)',marginBottom:6}}>Uptime</div>
+            <span className="mono" style={{fontSize:14,fontWeight:700}}>{fmtUptime(metrics.uptime)}</span>
+          </div>
+        </div>
+      </div>
+      <div className="card">
+        <div className="card-head"><span className="card-title">Circuit Breakers</span></div>
+        {Object.keys(circuits).length === 0 ? (
+          <div style={{color:'var(--text-faint)',fontSize:12,padding:'8px 0'}}>No circuit breakers configured</div>
+        ) : (
+          <div className="circuit-grid">
+            {Object.entries(circuits).map(([name, cb]) => (
+              <div key={name} className={`circuit-card ${cb.state==='OPEN'?'open':cb.state==='CLOSED'?'closed':''}`}>
+                <div className="row" style={{justifyContent:'space-between'}}>
+                  <span style={{fontWeight:600,fontSize:12}}>{name}</span>
+                  <span className={`tag ${cb.state==='OPEN'?'short':'long'}`}>{cb.state||'—'}</span>
+                </div>
+                <span className="faint mono" style={{fontSize:10}}>Failures: {cb.failures||0}</span>
+                {cb.nextAttempt && <span className="faint mono" style={{fontSize:10}}>Next: {fmtTime(cb.nextAttempt)}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+    <div className="grid-2">
+      <div className="card">
+        <div className="card-head">
+          <span className="card-title">Event Bus</span>
+          <span className="faint mono">{audit.length} events</span>
+        </div>
+        {Object.keys(ebByType).length === 0 ? (
+          <div style={{color:'var(--text-faint)',fontSize:12}}>No events in ring buffer</div>
+        ) : (
+          Object.entries(ebByType).slice(0, 10).map(([type, count]) => (
+            <div key={type} className="sh-eb-row">
+              <span className="mono" style={{fontSize:11}}>{type}</span>
+              <span className="mono">{count}</span>
+              <span className="mono faint" style={{fontSize:10}}>{audit.length > 0 ? ((count/audit.length)*100).toFixed(1)+'%' : '—'}</span>
+            </div>
+          ))
+        )}
+      </div>
+      <div className="card">
+        <div className="card-head"><span className="card-title">Signal Generator</span></div>
+        {sigGen ? (
+          <div className="col" style={{gap:8}}>
+            <div className="dd-row"><span>Status</span><span style={{color:sigGen.running?'var(--pos)':'var(--text-faint)'}}>{sigGen.running?'RUNNING':'STOPPED'}</span></div>
+            <div className="dd-row"><span>Strategy</span><span>{sigGen.strategie||'—'}</span></div>
+            <div className="dd-row"><span>Interval</span><span>{sigGen.interval||60}s</span></div>
+            <div className="dd-row"><span>Last signal</span><span>{sigGen.lastSignalAt?fmtTime(sigGen.lastSignalAt):'Never'}</span></div>
+            <div className="dd-row"><span>Cooldown</span><span>{sigGen.inCooldown?'Yes':'No'}</span></div>
+          </div>
+        ) : <div style={{color:'var(--text-faint)',fontSize:12}}>Loading…</div>}
+      </div>
+    </div>
+    <div className="grid-2">
+      <div className="card">
+        <div className="card-head"><span className="card-title">Performance Metrics</span></div>
+        <div className="col" style={{gap:4}}>
+          {Object.entries(metrics).map(([k,v]) => (
+            <div key={k} className="dd-row">
+              <span>{k.replace(/_/g,' ')}</span>
+              <span>{typeof v==='number'?v.toLocaleString():String(v)}</span>
+            </div>
+          ))}
+          {Object.keys(metrics).length===0 && <div style={{color:'var(--text-faint)',fontSize:12}}>No metrics available</div>}
+        </div>
+      </div>
+      <div className="card">
+        <div className="card-head">
+          <span className="card-title">Dedup Cache</span>
+          <span className="faint mono">{Object.keys(dedup).length} entries</span>
+        </div>
+        <div style={{maxHeight:200,overflowY:'auto'}}>
+          {Object.entries(dedup).slice(0,20).map(([k,v]) => (
+            <div key={k} className="dd-row">
+              <span className="mono" style={{fontSize:11}}>{k.slice(0,20)+'…'}</span>
+              <span>{fmtTime(v)}</span>
+            </div>
+          ))}
+          {Object.keys(dedup).length===0 && <div style={{color:'var(--text-faint)',fontSize:12}}>Cache empty</div>}
+        </div>
+      </div>
+    </div>
+  </>);
+}
+
+// ─── Logs Screen ──────────────────────────────────────────────────────────
+function LogsScreen({ events }) {
+  const typeColor = type => {
+    if(['ORDER_PLACED','RISK_APPROVED','PNL_RECORDED'].includes(type)) return 'type-pos';
+    if(['ORDER_FAILED','ERROR','RISK_REJECTED'].includes(type)) return 'type-error';
+    if(['SIGNAL_RECEIVED','SIGNAL_ENRICHED'].includes(type)) return 'type-acc';
+    return '';
+  };
+  return (<>
+    <div className="card" style={{padding:0}}>
+      <div className="card-head" style={{padding:'12px 16px'}}>
+        <span className="card-title">Live Event Stream</span>
+        <span className="faint mono">{events.length} events</span>
+      </div>
+      <div className="log-list">
+        {events.slice(0,100).map((e,i) => (
+          <div key={i} className={`log-entry ${typeColor(e.type)}`}>
+            <span style={{color:'var(--text-faint)'}}>{e.timestamp?new Date(e.timestamp).toLocaleTimeString('en-GB'):'—'}</span>
+            <span style={{fontWeight:600}}>{e.type||'—'}</span>
+            <span style={{color:'var(--text-dim)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+              {e.source} {e.payload?JSON.stringify(e.payload).slice(0,80):''}
+            </span>
+          </div>
+        ))}
+        {events.length===0 && <div style={{padding:'40px 16px',textAlign:'center',color:'var(--text-faint)',fontSize:12}}>Waiting for events… Connect to /ws</div>}
+      </div>
+    </div>
+  </>);
+}
+
+// ─── Drilldowns ───────────────────────────────────────────────────────────
+function TradeDrilldown({ trade, onClose }) {
+  if (!trade) return null;
+  return (<>
+    <div className={`drilldown-scrim ${trade?'open':''}`} onClick={onClose}/>
+    <aside className={`drilldown ${trade?'open':''}`}>
+      <div className="drilldown-head">
+        <div>
+          <div className="row" style={{gap:10,alignItems:'center'}}>
+            <h2 style={{margin:0,fontSize:18,fontWeight:600}}>{trade.pair||'Trade'}</h2>
+            <span className={`tag ${(trade.side||'').toLowerCase()==='buy'||trade.side==='LONG'?'long':'short'}`}>{trade.side}</span>
+          </div>
+          <div className="dim mono" style={{fontSize:11,marginTop:4}}>Strategy: {trade.strategyName||trade.strategy||'—'}</div>
+        </div>
+        <button className="dd-close" onClick={onClose}><Icon name="x" size={14}/></button>
+      </div>
+      <div className="drilldown-body">
+        <div className="kpi" style={{padding:16}}>
+          <div className="kpi-label"><span>Realized P&L</span></div>
+          <div className="kpi-value" style={{fontSize:32,color:trade.pnl>=0?'var(--pos)':'var(--neg)'}}>{fmtUSD(trade.pnl,{signed:true})}</div>
+        </div>
+        <div className="card" style={{gap:2}}>
+          <span className="card-title" style={{marginBottom:6}}>Execution Details</span>
+          <div className="dd-row"><span>Entry Price</span><span>{trade.entryPx||trade.entryPrice||trade.entry||'—'}</span></div>
+          <div classNam

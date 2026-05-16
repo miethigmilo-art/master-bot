@@ -21,6 +21,12 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
 
 // ── Backtesting Engine ────────────────────────────────
 const BT = require('./backtest');
+const db = require('./db');
+const { bus, STREAMS, EVENT_TYPES } = require('./eventbus');
+const { RiskEngine } = require('./risk_engine');
+const { aggregateAgents } = require('./agents');
+const { breakers, dedup, metrics, validator } = require('./hardening');
+const { SignalGenerator } = require('./signal_generator');
 
 // ── Settings ──────────────────────────────────────────
 const SETTINGS_PATH = path.join(__dirname, 'settings.json');
@@ -55,6 +61,7 @@ let tradeHistory  = loadJSON(TRADES_PATH, {});
 let tagesStart    = {};
 let letzteEquity  = {};
 let aktiveTrades  = {};
+let sigGen = null;  // Signal Generator Instanz (V4 #14)
 let letzterTrade  = {};
 let logs          = [];
 
@@ -126,6 +133,28 @@ function addLog(level, msg) {
   broadcast('log', entry);
   console.log(`[${level}] ${msg}`);
 }
+
+// ── Event Bus Helpers ───────────────────────────────────
+function waitForRiskDecision(signalEventId, timeoutMs) {
+  timeoutMs = timeoutMs || 5000;
+  return new Promise(function(resolve, reject) {
+    var timer = setTimeout(function() {
+      bus.off(STREAMS.RISK, handler);
+      reject(new Error('Risk Engine Timeout'));
+    }, timeoutMs);
+    function handler(event) {
+      if (!event.payload || event.payload.signalEventId !== signalEventId) return;
+      clearTimeout(timer);
+      bus.off(STREAMS.RISK, handler);
+      resolve(event);
+    }
+    bus.on(STREAMS.RISK, handler);
+  });
+}
+
+bus.subscribe('*', function(event) {
+  broadcast('bus_event', { stream: event.stream, type: event.type, source: event.source, ts: event.timestamp });
+});
 
 // ── Capital.com Auth ──────────────────────────────────
 async function login(name) {
@@ -237,22 +266,26 @@ function updatePerf(name, pnl) {
   else { p.verlust++; if (pnl < p.schlechtester) p.schlechtester = pnl; }
   p.winRate = parseFloat(((p.gewinn / p.trades) * 100).toFixed(1));
   saveJSON(PERF_PATH, performance);
+  db.setPerformance(name, p).catch(() => {});
   broadcast('performance', { name, perf: p });
 }
 
 function addEquity(name, equity) {
   if (!equityHistory[name]) equityHistory[name] = [];
-  equityHistory[name].push({ ts: Date.now(), equity });
+  const _ts = Date.now();
+  equityHistory[name].push({ ts: _ts, equity });
   if (equityHistory[name].length > 500) equityHistory[name].shift();
   saveJSON(EQUITY_PATH, equityHistory);
-  broadcast('equity', { name, equity, ts: Date.now() });
+  db.addEquity(name, equity, _ts).catch(() => {});
+  broadcast('equity', { name, equity, ts: _ts });
 }
 
 function addTrade(name, trade) {
   if (!tradeHistory[name]) tradeHistory[name] = [];
   tradeHistory[name].push(trade);
-  if (tradeHistory[name].length > 200) tradeHistory[name].shift();
+  if (tradeHistory[name].length > 500) tradeHistory[name].shift();
   saveJSON(TRADES_PATH, tradeHistory);
+  db.addTrade(name, trade).catch(() => {});
   trackStunde(name, trade.pnl);
 }
 
@@ -263,7 +296,8 @@ function trackStunde(name, pnl) {
   if (!stundenStats[name][h]) stundenStats[name][h] = { wins: 0, losses: 0 };
   if (pnl > 0) stundenStats[name][h].wins++;
   else stundenStats[name][h].losses++;
-  saveJSON(STUNDEN_PATH, stundenStats);  // FIX 4: Nach jeder Aktualisierung persistieren
+  saveJSON(STUNDEN_PATH, stundenStats);
+  db.updateStunden(name, h, pnl).catch(() => {});
 }
 
 function istSchlechteStunde(name) {
@@ -315,9 +349,237 @@ async function autoTune(name) {
     broadcast('settings', { name, settings: SETTINGS[name] });
     broadcast('tuning', { name, aktion, wr: wrPct, konsek, ts: new Date().toISOString() });
     if (!tuningHistory[name]) tuningHistory[name] = [];
-    tuningHistory[name].push({ ts: new Date().toISOString(), aktion, wr: wrPct, konsek, riskPct: SETTINGS[name].riskPct });
+    const _te = { ts: new Date().toISOString(), aktion, wr: wrPct, konsek, riskPct: SETTINGS[name].riskPct };
+    tuningHistory[name].push(_te);
+    db.addTuning(name, _te).catch(() => {});
     if (tuningHistory[name].length > 100) tuningHistory[name].shift();
     saveJSON(TUNING_PATH, tuningHistory);
+  }
+
+  // Nach jedem Trade auch Strategie-Score prüfen (pausiert schlechte Strategien)
+  await pruefeStrategieScore(name);
+}
+
+// ── Strategie Scoring & Auto-Pause (V2 Item 7) ───────────────────────────
+const SCORE_PATH = path.join(DATA_DIR, 'score_pauses.json');
+
+const SCORE_CFG = {
+  MIN_TRADES:   15,   // mindestens X Trades bevor Score berechnet wird
+  PAUSE_UNTER:  25,   // Score < 25 → Strategie pausieren
+  RESUME_UEBER: 40,   // Score ≥ 40 → Strategie wieder aktivieren
+};
+
+// scorePauses[name] = { paused: bool, score: number|null, grund: string, geaendertAm: string }
+let scorePauses = loadJSON(SCORE_PATH, {});
+
+function scoreBadge(score) {
+  if (score === null || score === undefined) return '⚪';
+  if (score >= 60) return '🟢';
+  if (score >= 40) return '🟡';
+  if (score >= 25) return '🟠';
+  return '🔴';
+}
+
+// Score-basiertes Sizing: graduell statt hart pausieren
+function getScoreWeightFaktor(name) {
+  const sp = scorePauses[name];
+  if (!sp || sp.score == null) return 1.0;
+  const s = sp.score;
+  if (s >= 70) return 1.2;
+  if (s >= 50) return 1.0;
+  if (s >= 35) return 0.6;
+  if (s >= 25) return 0.3;
+  return 0.0;
+}
+
+async function pruefeStrategieScore(name) {
+  const trades = tradeHistory[name] || [];
+  if (trades.length < SCORE_CFG.MIN_TRADES) return;
+
+  const metriken = BT.berechneMetriken(trades);
+  const score    = BT.berechneStrategieScore(metriken);
+  if (score === null) return;
+
+  const prev  = scorePauses[name] || { paused: false };
+  const badge = scoreBadge(score);
+
+  if (!prev.paused && score < SCORE_CFG.PAUSE_UNTER) {
+    // Score zu schlecht → Strategie pausieren
+    scorePauses[name] = {
+      paused:      true,
+      score,
+      grund:       `Score ${score}/100 < ${SCORE_CFG.PAUSE_UNTER} | WR: ${metriken.winRate}% | PF: ${metriken.profitFactor}`,
+      geaendertAm: new Date().toISOString(),
+    };
+    saveJSON(SCORE_PATH, scorePauses);
+    broadcast('score_pause', { name, ...scorePauses[name] });
+    const msg = `${badge} [${name}] Score-Pause: ${score}/100 — WR ${metriken.winRate}%, PF ${metriken.profitFactor}`;
+    addLog('tuning', msg);
+    await tg(`🔴 <b>[${name}] Score-Pause aktiviert</b>\nScore: ${score}/100\nWin Rate: ${metriken.winRate}%\nProfit Factor: ${metriken.profitFactor}\n\n<i>Strategie pausiert bis Score ≥ ${SCORE_CFG.RESUME_UEBER}</i>`);
+  } else if (prev.paused && score >= SCORE_CFG.RESUME_UEBER) {
+    // Score erholt → Strategie wieder aktivieren
+    scorePauses[name] = {
+      paused:      false,
+      score,
+      grund:       `Score ${score}/100 ≥ ${SCORE_CFG.RESUME_UEBER} — wieder aktiv`,
+      geaendertAm: new Date().toISOString(),
+    };
+    saveJSON(SCORE_PATH, scorePauses);
+    broadcast('score_resume', { name, ...scorePauses[name] });
+    const msg = `🟢 [${name}] Score-Resume: ${score}/100 — wieder aktiv`;
+    addLog('tuning', msg);
+    await tg(`🟢 <b>[${name}] Score-Pause aufgehoben</b>\nScore: ${score}/100\nWin Rate: ${metriken.winRate}%\nProfit Factor: ${metriken.profitFactor}`);
+  } else {
+    // Kein Statuswechsel — Score aktualisieren
+    scorePauses[name] = { ...prev, score, geaendertAm: new Date().toISOString() };
+    saveJSON(SCORE_PATH, scorePauses);
+  }
+  broadcast('score_status', scorePauses);
+}
+
+async function pruefeAlleScores() {
+  addLog('info', '📊 Strategie-Score Check...');
+  for (const name of Object.keys(KONTEN)) {
+    try { await pruefeStrategieScore(name); } catch {}
+  }
+  broadcast('score_status', scorePauses);
+}
+
+// ── V3: Memory System ────────────────────────────────────────────────────────
+// Merkt sich welche Marktbedingungen (Modus, Stunde, Wochentag, Side) zu Gewinnen führen.
+// Wird beim PnL-Feedback-Loop aktualisiert und beeinflusst den Konfidenz-Schwellwert.
+
+const MEMORY_PATH = path.join(DATA_DIR, 'memory.json');
+
+// memory[key] = { wins: N, losses: N }
+// key = "MODUS_hour_weekday_side" z.B. "BULL_9_1_BUY"
+let memory = loadJSON(MEMORY_PATH, {});
+
+const MEMORY_CFG = {
+  MIN_OBS:        8,    // mindestens X Beobachtungen bevor Memory aktiv
+  BOOST_THRESH:   0.65, // WR >= 65% in dieser Bedingung → Konfidenz um 0.04 senken (Trade eher erlauben)
+  REDUCE_THRESH:  0.35, // WR <= 35% in dieser Bedingung → Konfidenz um 0.04 erhöhen (Trade eher blocken)
+  ADJ:            0.04, // Konfidenz-Anpassung (in ±)
+};
+
+function memoryKey(modus, hour, weekday, side) {
+  return `${modus}_${hour}_${weekday}_${side}`;
+}
+
+function updateMemory(modus, hour, weekday, side, pnl) {
+  if (!modus || pnl === 0) return;
+  const key = memoryKey(modus, hour, weekday, side);
+  if (!memory[key]) memory[key] = { wins: 0, losses: 0 };
+  if (pnl > 0) memory[key].wins++;
+  else memory[key].losses++;
+  saveJSON(MEMORY_PATH, memory);
+}
+
+function getMemoryAdjust(modus, hour, weekday, side) {
+  // Gibt Konfidenz-Anpassung zurück: positiv = strenger, negativ = lockerer
+  const key = memoryKey(modus, hour, weekday, side);
+  const m = memory[key];
+  if (!m) return 0;
+  const total = m.wins + m.losses;
+  if (total < MEMORY_CFG.MIN_OBS) return 0;
+  const wr = m.wins / total;
+  if (wr >= MEMORY_CFG.BOOST_THRESH)  return -MEMORY_CFG.ADJ;  // gut → lockerer
+  if (wr <= MEMORY_CFG.REDUCE_THRESH) return +MEMORY_CFG.ADJ;  // schlecht → strenger
+  return 0;
+}
+
+function getMemoryInsight(name, side) {
+  // Gibt eine kurze Zusammenfassung der besten/schlechtesten Bedingungen zurück
+  const entries = Object.entries(memory)
+    .filter(([k]) => k.endsWith('_' + side))
+    .map(([key, m]) => {
+      const total = m.wins + m.losses;
+      const wr = total >= MEMORY_CFG.MIN_OBS ? (m.wins / total) : null;
+      return { key, ...m, total, wr };
+    })
+    .filter(e => e.wr !== null)
+    .sort((a, b) => b.wr - a.wr);
+  return {
+    best:  entries.slice(0, 3),
+    worst: entries.slice(-3).reverse(),
+    total: entries.length,
+  };
+}
+
+// -- V3 Meta-Learning: Modell-Drift Detection ----------------------------
+const META_CFG = {
+  BUFFER_SIZE:     30,
+  MIN_OUTCOMES:    15,
+  DRIFT_THRESHOLD: 15,
+  CONF_MIN:        0.54,
+  MAX_DAYS:        14,
+  CHECK_INTERVAL:  60,
+};
+
+const mlPredBuffer = {};
+
+function trackMlPrediction(name, ml) {
+  if (!ml || !ml.trainiert || ml.konfidenz == null) return;
+  if (!mlPredBuffer[name]) mlPredBuffer[name] = [];
+  mlPredBuffer[name].push({ ts: Date.now(), konfidenz: ml.konfidenz, win: null });
+  if (mlPredBuffer[name].length > META_CFG.BUFFER_SIZE) mlPredBuffer[name].shift();
+}
+
+function trackMlOutcome(name, win) {
+  const buf = mlPredBuffer[name];
+  if (!buf) return;
+  for (let i = buf.length - 1; i >= 0; i--) {
+    if (buf[i].win === null) { buf[i].win = win; break; }
+  }
+}
+
+async function triggerRetrain(strategie) {
+  if (!ML_URL) return;
+  try {
+    await axios.post(`${ML_URL}/train`, { strategie }, { timeout: 30000 });
+    addLog('tuning', `[Meta] Retrain ausgeloest: ${strategie}`);
+    bus.emit_event(EVENT_TYPES.AUTOTUNE_TRIGGERED, 'meta_learning', { strategie, grund: 'model_drift' });
+    broadcast('meta_retrain', { strategie, ts: Date.now() });
+    await tg(`<b>Meta-Learning: Retrain</b> -- ${strategie}
+Modell-Drift erkannt, Retraining ausgeloest.`);
+  } catch (err) {
+    addLog('warn', `[Meta] Retrain fehlgeschlagen: ${err.message}`);
+  }
+}
+
+async function pruefeModelDrift() {
+  if (!ML_URL) return;
+  for (const name of Object.keys(SETTINGS)) {
+    const buf = mlPredBuffer[name] || [];
+    const withOutcome = buf.filter(e => e.win !== null);
+    const status = (mlStatus || {})[name];
+    const meta   = status?.meta;
+    const needsRetrain = [];
+
+    if (meta?.trainiert_am) {
+      const days = (Date.now() - new Date(meta.trainiert_am).getTime()) / (1000 * 60 * 60 * 24);
+      if (days > META_CFG.MAX_DAYS) needsRetrain.push(`${days.toFixed(0)}d ohne Retrain`);
+    }
+
+    if (withOutcome.length >= META_CFG.MIN_OUTCOMES && meta?.accuracy_cv) {
+      const recentAcc = withOutcome.filter(e => e.win).length / withOutcome.length * 100;
+      const modelAcc  = meta.accuracy_cv * 100;
+      const drift     = modelAcc - recentAcc;
+      if (drift > META_CFG.DRIFT_THRESHOLD) {
+        needsRetrain.push(`Accuracy-Drift ${drift.toFixed(1)}% (Modell: ${modelAcc.toFixed(0)}%, Aktuell: ${recentAcc.toFixed(0)}%)`);
+      }
+    }
+
+    if (buf.length >= 10) {
+      const avgConf = buf.slice(-10).reduce((s, e) => s + e.konfidenz, 0) / 10;
+      if (avgConf < META_CFG.CONF_MIN) needsRetrain.push(`Avg-Konfidenz ${(avgConf*100).toFixed(0)}% < ${META_CFG.CONF_MIN*100}%`);
+    }
+
+    if (needsRetrain.length > 0) {
+      addLog('tuning', `[Meta] Drift [${name}]: ${needsRetrain.join(' | ')}`);
+      broadcast('meta_drift', { name, gruende: needsRetrain, ts: Date.now() });
+      await triggerRetrain(name);
+    }
   }
 }
 
@@ -338,7 +600,7 @@ async function mlPredict(name, side, equity, rrr) {
       recentWR5:  f5.length  ? parseFloat(((f5.filter(t=>t.pnl>0).length/f5.length)*100).toFixed(1))  : null,
       recentWR15: f15.length ? parseFloat(((f15.filter(t=>t.pnl>0).length/f15.length)*100).toFixed(1)) : null,
       konsek:     berechneKonsek(name),
-      threshold:  getKonfidenzSchwelle(),  // Dynamischer Schwellwert je nach Market Mode
+      threshold:  getKonfidenzSchwelle(side, new Date().getHours(), new Date().getDay()),  // Market Mode + Memory
     }, { timeout: 3000 });
     return res.data;
   } catch (err) {
@@ -375,14 +637,14 @@ function berechneKonsek(name) {
 
 // FIX 1 + FIX 3: logFeature mit PnL-Feedback Loop und erweiterten Features
 // extras = { offer, bid, entry, slF, tpF } — alle optional, aus dem Markt-Snapshot
-function logFeature(name, side, equity, rrr, ausgefuehrt, grund = null, extras = {}) {
+function logFeature(name, side, equity, rrr, ausgefuehrt, grund = null, extras = {}, correlationId = null) {
   try {
     const s    = SETTINGS[name] || {};
     const hour = new Date().getHours();
     const { offer = null, bid = null, entry = null, slF = null, tpF = null } = extras;
 
     const feature = {
-      ts: Date.now(), strategie: name, side, equity,
+      ts: Date.now(), correlationId: correlationId || null, strategie: name, side, equity,
       hour, weekday: new Date().getDay(),
       recentWR5:  berechneWR(name, 5),
       recentWR15: berechneWR(name, 15),
@@ -415,6 +677,7 @@ function logFeature(name, side, equity, rrr, ausgefuehrt, grund = null, extras =
       // FIX 1: Skip/Filter → sofort mit pnl: null in Datei schreiben
       feature.pnl = null;
       fs.appendFileSync(FEATURES_PATH, JSON.stringify(feature) + '\n');
+      db.logFeature(feature).catch(() => {});
     }
   } catch {}
 }
@@ -502,7 +765,9 @@ async function analysiereMarktmodus() {
       momentum, aktualisiertAm: new Date().toISOString(),
     };
     saveJSON(MARKET_MODE_PATH, marketMode);
+    db.setMarketMode(marketMode).catch(() => {});
     broadcast('market_mode', marketMode);
+    bus.emit_event(EVENT_TYPES.MARKET_MODE_UPDATED, 'market_analyser', { modus: neuerModus, alter, preis: marketMode.preis });
 
     const cfg = MARKET_MODES[neuerModus];
     if (neuerModus !== alter) {
@@ -520,9 +785,13 @@ function getMarktSizingFaktor() {
   return MARKET_MODES[marketMode.modus]?.sizingFaktor ?? 1.0;
 }
 
-function getKonfidenzSchwelle() {
+function getKonfidenzSchwelle(side, hour, weekday) {
   const adj = MARKET_MODES[marketMode.modus]?.konfidenzAdjust ?? 0;
-  return parseFloat(Math.min(0.95, Math.max(0.50, BASIS_KONFIDENZ + adj)).toFixed(2));
+  // V3 Memory: zusätzliche Anpassung basierend auf historischen Bedingungen
+  const memAdj = (side && hour != null && weekday != null)
+    ? getMemoryAdjust(marketMode.modus, hour, weekday, side)
+    : 0;
+  return parseFloat(Math.min(0.95, Math.max(0.50, BASIS_KONFIDENZ + adj + memAdj)).toFixed(2));
 }
 
 // ── Webhook Handler ───────────────────────────────────
@@ -539,18 +808,38 @@ async function handleWebhook(req, res, name) {
   if (letzterTrade[name] && Date.now() - letzterTrade[name] < 30000)
     return res.status(429).json({ error: 'Cooldown aktiv (30s)' });
 
+  // -- HARDENING: Signal Deduplication ----------------------------------
+  if (dedup.isDuplicate(name, req.body.side, req.body.sl, req.body.tp)) {
+    metrics.inc('signal_dedup');
+    addLog('warn', `[Dedup] ${name}: identisches Signal innerhalb 15s ignoriert`);
+    return res.status(429).json({ error: 'Duplikat-Signal ignoriert (15s Fenster)' });
+  }
+
   aktiveTrades[name] = true;
   try {
     addLog('info', `📨 Signal [${name}]: ${JSON.stringify(req.body)}`);
+    const sigReceivedEvent = bus.emit_event(EVENT_TYPES.SIGNAL_RECEIVED, 'webhook', { strategie: name, side: req.body.side, sl: req.body.sl, tp: req.body.tp });
+    const correlationId = sigReceivedEvent.id;  // Root-Event-ID — folgt dem Signal durch alle Stages
+    metrics.inc('signals_received');
     const { side, sl, tp } = req.body;
     if (!side || !sl || !tp) return res.status(400).json({ error: 'Fehlende Felder (side/sl/tp)' });
 
     // Signal für späteren Backtest-Replay loggen
-    try { fs.appendFileSync(SIGNALS_PATH, JSON.stringify({ ts: Date.now(), strategie: name, side, sl, tp }) + '\n'); } catch {}
+    const _sig = { ts: Date.now(), strategie: name, side, sl, tp };
+    try { fs.appendFileSync(SIGNALS_PATH, JSON.stringify(_sig) + '\n'); } catch {}
+    db.addSignal(_sig).catch(() => {});
 
     await ensureAuth(name);
     const equity = await getEquity(name);
     performance[name].equity = equity;
+
+    // -- HARDENING: State Validation --------------------------------
+    const _stateCheck = validator.validate(name, { settings: s, performance: performance[name], equity });
+    if (!_stateCheck.valid) {
+      addLog('warn', `[StateValidator] ${name}: ${_stateCheck.issues.join(', ')}`);
+      metrics.error('state_validation', `${name}: ${_stateCheck.issues.join(', ')}`);
+      // Nicht blockieren, aber warnen und messen
+    }
 
     if (tagesStart[name] == null) tagesStart[name] = equity;
     const tagesPct = ((equity - tagesStart[name]) / tagesStart[name]) * 100;
@@ -584,58 +873,48 @@ async function handleWebhook(req, res, name) {
         return res.json({ status: 'übersprungen', grund: 'VORSICHTIG – nur LONG' });
     }
 
-    // ── Market Mode: PANIC → kein Trading ─────────────────────────────
-    if (marketMode.modus === 'PANIC') {
-      addLog('warn', `🆘 [${name}] Trade blockiert: PANIC Modus`);
-      logFeature(name, side, equity, null, false, 'PANIC Modus', {});
-      return res.json({ status: 'übersprungen', grund: 'PANIC Modus — kein Trading' });
-    }
+        // -- HARDENING: Risk Engine als echter Gatekeeper -----------------
+    // SIGNAL_ENRICHED emittieren — Risk Engine subscribt auf diesen Event
+    // und emittiert daraufhin RISK_SIZED oder RISK_REJECTED.
+    const sigEnrichedEvent = bus.emit_event(EVENT_TYPES.SIGNAL_ENRICHED, 'webhook', {
+      correlationId, strategie: name, side, sl: slF, tp: tpF, entry,
+      equity, rrr, drawdownPct: ((s.startEquity - equity) / s.startEquity) * 100,
+    }, correlationId);
+    metrics.inc('signals_enriched');
 
-    // PnL aufzeichnen
-    if (letzteEquity[name] != null) {
-      const pnl = parseFloat((equity - letzteEquity[name]).toFixed(2));
-      if (pnl !== 0) {
-        updatePerf(name, pnl);
-        addTrade(name, { datum: new Date().toISOString(), pnl, equity, side });
-        addLog('info', `\u{1F4DD} [${name}] PnL ${pnl >= 0 ? '+' : ''}${pnl}€`);
-        // FIX 1: PnL-Feedback Loop — pending Feature mit Outcome abschließen und in features.jsonl schreiben
-        if (pendingFeatures[name]) {
-          const completed = { ...pendingFeatures[name], pnl };
-          fs.appendFileSync(FEATURES_PATH, JSON.stringify(completed) + '\n');
-          delete pendingFeatures[name];
-        }
-        await autoTune(name);  // Nach jedem Trade: Selbst-Anpassung prüfen
-      }
-    }
-    letzteEquity[name] = equity;
-    addEquity(name, equity);
-
-    // RRR prüfen
-    let slF = parseFloat(sl), tpF = parseFloat(tp);
-    const minRRR = (s.regimeFilter && regimeModus === 'VORSICHTIG') ? 3.5 : s.minRRR;
-    // FIX 2: entry, offer, bid außerhalb des try-Blocks deklarieren
-    let entry = null, offer = null, bid = null;
+    // waitForRiskDecision() haelt den HTTP-Request an bis Risk Engine
+    // entschieden hat. Timeout = 5s -> fail-SAFE = REJECT (kein Trade).
+    let riskDecision;
     try {
-      const mkt = await axios.get(`${BASE_URL}/markets/GOLD`, { headers: headers(name) });
-      offer = mkt.data.snapshot.offer;
-      bid   = mkt.data.snapshot.bid;
-      entry = side === 'BUY' ? offer : bid;
-      const riskD = Math.abs(entry - slF), rewardD = Math.abs(tpF - entry);
-      if (riskD > 0 && rewardD / riskD < minRRR) {
-        tpF = side === 'BUY' ? entry + riskD * minRRR : entry - riskD * minRRR;
-        tpF = parseFloat(tpF.toFixed(2));
-        addLog('info', `\u{1F4D0} [${name}] RRR angepasst: TP → ${tpF}`);
-      }
-    } catch {}
+      riskDecision = await waitForRiskDecision(sigEnrichedEvent.id, 5000);
+    } catch (riskErr) {
+      metrics.error('risk_timeout', `${name}: ${riskErr.message}`);
+      addLog('warn', `[Risk] ${name}: Timeout — Trade wird sicherheitshalber abgebrochen`);
+      return res.json({ status: 'uebersprungen', grund: 'Risk Engine Timeout (fail-safe: reject)' });
+    }
+    if (riskDecision.type === 'RISK_REJECTED') {
+      metrics.inc('risk_rejected');
+      const { grund, code: rCode } = riskDecision.payload;
+      addLog('warn', `[Risk] ${name}: REJECTED (${rCode}) — ${grund}`);
+      logFeature(name, side, equity, rrr, false, `Risk: ${grund}`, extras);
+      return res.json({ status: 'uebersprungen', grund, riskCode: rCode });
+    }
+    // RISK_SIZED -> Risk Engine hat Groesse berechnet (wird unten als Fallback genutzt)
+    const riskEngineSize = riskDecision.payload?.size ?? null;
+    metrics.inc('risk_approved');
 
-    // FIX 2: RRR korrekt berechnen (entry→sl = Risiko, entry→tp = Reward)
-    const slDist     = entry != null ? Math.abs(entry - slF) : Math.abs(tpF - slF);
-    const rewardDist = entry != null ? Math.abs(tpF - entry) : Math.abs(tpF - slF);
-    const rrr = slDist > 0 ? parseFloat((rewardDist / slDist).toFixed(2)) : 2.0;
-    const extras = { offer, bid, entry, slF, tpF };
-
+    // -- ML-Filter -------------------------------------------------------
     // ── ML-Filter ─────────────────────────────────────────────────
-    const ml  = await mlPredict(name, side, equity, rrr);
+    let ml;
+    if (breakers.ml.isOpen) {
+      ml = { empfehlung: 'trade', grund: 'ML-Circuit offen (fail-safe)', trainiert: false };
+      metrics.inc('ml_circuit_open');
+    } else {
+      const _t0 = Date.now();
+      ml = await mlPredict(name, side, equity, rrr);
+      metrics.timing('ml_latency', Date.now() - _t0);
+    }
+    trackMlPrediction(name, ml);
     addLog('info', `\u{1F916} [${name}] ML: ${ml.empfehlung} (${ml.konfidenz ? (ml.konfidenz*100).toFixed(0)+'%' : 'kein Modell'}) — ${ml.grund}`);
     if (ml.empfehlung === 'skip') {
       logFeature(name, side, equity, rrr, false, `ML: ${ml.grund}`, extras);
@@ -647,7 +926,7 @@ async function handleWebhook(req, res, name) {
     // Falls ml-service die Schwelle nicht angewendet hat (kein trainiertes Modell),
     // prüfen wir hier nochmal lokal anhand der rohen Konfidenz
     if (ml.trainiert && ml.konfidenz != null) {
-      const schwelle = getKonfidenzSchwelle();
+      const schwelle = getKonfidenzSchwelle(side, new Date().getHours(), new Date().getDay());
       if (ml.konfidenz < schwelle) {
         const msg = `Konfidenz ${(ml.konfidenz*100).toFixed(0)}% < ${marketMode.modus}-Schwelle ${(schwelle*100).toFixed(0)}%`;
         addLog('info', `📊 [${name}] Market Override: ${msg}`);
@@ -658,21 +937,49 @@ async function handleWebhook(req, res, name) {
     }
 
     await closePositions(name, 'GOLD');
+    // -- V4 Multi-Agent: Signal-Aggregation ----------------------------
+    const agentCtx = {
+      name, side, entry, equity, rrr,
+      marketMode: marketMode.modus,
+      hour:       new Date().getHours(),
+      minute:     new Date().getMinutes(),
+      weekday:    new Date().getDay(),
+      recentWR5:  berechneWR(name, 5),
+      recentWR15: berechneWR(name, 15),
+      konsek:     berechneKonsek(name),
+      slDistPct:  entry ? Math.abs(entry - slF) / entry * 100 : null,
+    };
+    const agentVote = aggregateAgents(agentCtx);
+    broadcast('agent_vote', { name, avgVote: agentVote.avgVote, approved: agentVote.approved, grund: agentVote.grund });
+    addLog('info', `[Agents] ${name}: ${(agentVote.avgVote*100).toFixed(0)}% | ${agentVote.grund}`);
+    if (!agentVote.approved) {
+      logFeature(name, side, equity, rrr, false, `Agents: ${agentVote.grund}`, extras);
+      return res.json({ status: 'uebersprungen', grund: agentVote.grund, agents: agentVote.agentResults });
+    }
+
 
     // Kombinations-Sizing: ML-Konfidenz × Market Mode
     // Beispiel: ML=1.5× (hohe Konfidenz) × BEAR=0.8 → 1.2× Endgröße
-    const mlSizing     = ml.sizing_faktor != null ? ml.sizing_faktor : 1.0;
-    const sizingFaktor = parseFloat((mlSizing * getMarktSizingFaktor()).toFixed(2));
-    addLog('info', `📐 [${name}] Sizing: ML=${mlSizing}× × Markt(${marketMode.modus})=${getMarktSizingFaktor()}× → ${sizingFaktor}×`);
-    const riskCapital = equity * (s.riskPct / 100) * sizingFaktor;
+        const mlSizing     = ml.sizing_faktor != null ? ml.sizing_faktor : 1.0;
+    const scoreWeight  = getScoreWeightFaktor(name);
+    const agentBonus   = agentVote.sizingBonus || 1.0;
+    const sizingFaktor = parseFloat((mlSizing * getMarktSizingFaktor() * scoreWeight * agentBonus).toFixed(2));
+    const _scoreHint   = scorePauses[name]?.score != null ? ` | Score=${scorePauses[name].score}/100 (${scoreWeight}×)` : '';
+    const _agentHint   = agentBonus > 1.0 ? ` | Agents-Boost ${agentBonus}×` : '';
+    addLog('info', `📐 [${name}] Sizing: ML=${mlSizing}× × Markt=${getMarktSizingFaktor()}× × Score=${scoreWeight}× × Agents=${agentBonus}× → ${sizingFaktor}×${_scoreHint}${_agentHint}`);
+    const riskCapital  = equity * (s.riskPct / 100) * sizingFaktor;
     const size = slDist > 0 ? Math.max(1, parseFloat((riskCapital / slDist).toFixed(1))) : 1;
 
     const order = { epic: 'GOLD', direction: side, size, guaranteedStop: false, stopLevel: slF, profitLevel: tpF };
     addLog('info', `\u{1F4E4} [${name}] Order: ${JSON.stringify(order)}`);
-    await placeOrder(name, order);
+    const _t1 = Date.now();
+    await breakers.broker.call(() => placeOrder(name, order));
+    metrics.timing('broker_latency', Date.now() - _t1);
+    metrics.inc('orders_placed');
 
-    logFeature(name, side, equity, rrr, true, null, extras);
+    logFeature(name, side, equity, rrr, true, null, extras, correlationId);
     await tg(`${side === 'BUY' ? '\u{1F7E2}' : '\u{1F534}'} <b>${side === 'BUY' ? 'LONG' : 'SHORT'}</b> — <b>${name}</b>\nSize: ${size} | SL: ${slF} | TP: ${tpF}${ml.trainiert ? ` | ML: ${(ml.konfidenz*100).toFixed(0)}%` : ''}`);
+    bus.emit_event(EVENT_TYPES.ORDER_PLACED, 'execution', { correlationId, strategie: name, side, size, sl: slF, tp: tpF, equity }, correlationId);
     broadcast('trade', { name, side, size, sl: slF, tp: tpF, equity });
     res.json({ status: 'ok', name, size, sl: slF, tp: tpF });
 
@@ -691,6 +998,103 @@ async function handleWebhook(req, res, name) {
   app.post(`/webhook/${n}`, (req, res) => handleWebhook(req, res, n));
 });
 app.post('/webhook/goldglobe', (req, res) => handleWebhook(req, res, 'smart'));
+// ── PnL-Webhook ───────────────────────────────────────────────────────────────
+// TradingView sendet diesen Webhook wenn ein Trade geschlossen wird.
+// Payload: { strategie, pnl, side, datum? }
+// Schliesst den ML-Feedback-Loop: Feature-Vektor + echtes Label (Gewinn/Verlust)
+app.post('/pnl', async (req, res) => {
+  const secret = req.body.secret || req.headers['x-webhook-secret'];
+  if (process.env.WEBHOOK_SECRET && secret !== process.env.WEBHOOK_SECRET)
+    return res.status(401).json({ error: 'Ungültiger Secret' });
+
+  const { strategie, pnl, side } = req.body;
+  const pnlNum = parseFloat(pnl);
+  if (!strategie || isNaN(pnlNum)) {
+    return res.status(400).json({ error: 'Fehlende Felder: strategie und pnl erforderlich' });
+  }
+  if (!SETTINGS[strategie]) {
+    return res.status(400).json({ error: 'Unbekannte Strategie: ' + strategie });
+  }
+
+  try {
+    // ── ML Feedback Loop: pendingFeature mit echtem PnL beschriften ──────────
+    const pending = pendingFeatures[strategie];
+    if (pending) {
+      pending.pnl   = pnlNum;
+      pending.label = pnlNum > 0 ? 1 : 0;
+      try {
+        fs.appendFileSync(FEATURES_PATH, JSON.stringify(pending) + '\n');
+        await db.logFeature(pending).catch(() => {});
+      } catch {}
+      delete pendingFeatures[strategie];
+      addLog('info', `[PnL] ${strategie}: Feature beschriftet — PnL=${pnlNum > 0 ? '+' : ''}${pnlNum.toFixed(2)} | Label=${pending.label}`);
+    } else {
+      addLog('info', `[PnL] ${strategie}: PnL erhalten (kein pending Feature) — ${pnlNum > 0 ? '+' : ''}${pnlNum.toFixed(2)}`);
+    }
+
+    // ── Performance & Trade History aktualisieren ────────────────────────────
+    const equity = await getEquity(strategie).catch(() => null);
+    const trade = {
+      datum:    new Date().toISOString(),
+      ts:       Date.now(),
+      strategie,
+      side:     side || (pending && pending.side) || '?',
+      pnl:      pnlNum,
+      equity:   equity || (performance[strategie]?.equity),
+      grund:    'PnL-Webhook',
+    };
+
+    updatePerf(strategie, pnlNum);
+    addTrade(strategie, trade);
+    if (equity) addEquity(strategie, equity);
+
+    // ── Memory System: Marktbedingungen bei Gewinn/Verlust ───────────────────
+    if (pending) {
+      updateMemory(pending.marketModus || marketMode.modus, pending.hour, pending.weekday, pending.side, pnlNum);
+    }
+
+    // ── AutoTune: Verlustserie prüfen ────────────────────────────────────────
+    autoTune(strategie);
+
+    // ── Event Bus: PNL_RECORDED emittieren ────────────────────────────────────
+    const correlationId = pending && pending.correlationId ? pending.correlationId : null;
+    bus.emit_event(EVENT_TYPES.PNL_RECORDED, 'pnl_webhook', {
+      strategie, pnl: pnlNum, label: pnlNum > 0 ? 1 : 0,
+      equity: equity || null, side: trade.side,
+    }, correlationId);
+    metrics.inc('pnl_recorded');
+    metrics.inc(pnlNum > 0 ? 'pnl_wins' : 'pnl_losses');
+
+    broadcast('trade', { name: strategie, ...trade });
+    const emoji = pnlNum > 0 ? '✅' : '❌';
+    await tg(`${emoji} <b>${strategie}</b> Trade geschlossen\nPnL: ${pnlNum > 0 ? '+' : ''}${pnlNum.toFixed(2)} | Equity: ${equity ? equity.toFixed(2) : '?'}`);
+
+    res.json({ ok: true, strategie, pnl: pnlNum, equity });
+  } catch (err) {
+    addLog('error', `[PnL] ${strategie}: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Kurzform: POST /pnl/:strategie setzt strategie im Body und handled identisch
+app.post('/pnl/:name', async (req, res) => {
+  req.body.strategie = req.body.strategie || req.params.name;
+  // Weiterleitung: einfach denselben Body mit strategie an /pnl-Logik
+  const secret = req.body.secret || req.headers['x-webhook-secret'];
+  if (process.env.WEBHOOK_SECRET && secret !== process.env.WEBHOOK_SECRET)
+    return res.status(401).json({ error: 'Ungültiger Secret' });
+  const { strategie, pnl, side } = req.body;
+  const pnlNum = parseFloat(pnl);
+  if (!strategie || isNaN(pnlNum)) return res.status(400).json({ error: 'Fehlende Felder' });
+  if (!SETTINGS[strategie]) return res.status(400).json({ error: 'Unbekannte Strategie: ' + strategie });
+  // Intern an /pnl weiterleiten via axios (loopback)
+  try {
+    const r = await require('axios').post(`http://localhost:${PORT}/pnl`, req.body, { headers: { 'x-webhook-secret': secret || '' }, timeout: 10000 });
+    res.json(r.data);
+  } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+
 
 // ── SL Update ─────────────────────────────────────────────────────
 app.post('/webhook/update_sl/:name', async (req, res) => {
@@ -857,7 +1261,66 @@ app.get('/api/backtest/signals', (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ── Konfidenz-Schwellwert API ──────────────────────────────────────────────────
+// ── Score API (V2 Item 7) ──────────────────────────────────────────────────────
+app.get('/api/score-status', (req, res) => {
+  const result = {};
+  for (const name of Object.keys(KONTEN)) {
+    const trades   = tradeHistory[name] || [];
+    const metriken = BT.berechneMetriken(trades);
+    const score    = BT.berechneStrategieScore(metriken);
+    result[name] = {
+      score,
+      badge:        scoreBadge(score),
+      paused:       scorePauses[name]?.paused ?? false,
+      grund:        scorePauses[name]?.grund ?? null,
+      geaendertAm:  scorePauses[name]?.geaendertAm ?? null,
+      trades:       trades.length,
+      winRate:      metriken?.winRate      ?? null,
+      profitFactor: metriken?.profitFactor ?? null,
+      sharpe:       metriken?.sharpe       ?? null,
+      maxDrawdown:  metriken?.maxDrawdown  ?? null,
+    };
+  }
+  res.json({ cfg: SCORE_CFG, strategien: result });
+});
+
+app.post('/api/score/check', async (req, res) => {
+  await pruefeAlleScores();
+  res.json({ status: 'ok', scores: scorePauses });
+});
+
+app.post('/api/score/resume/:name', async (req, res) => {
+  const { name } = req.params;
+  if (!KONTEN[name]) return res.status(404).json({ error: 'Strategie nicht gefunden' });
+  const prev = scorePauses[name] || {};
+  scorePauses[name] = { ...prev, paused: false, grund: 'Manuell entsperrt', geaendertAm: new Date().toISOString() };
+  saveJSON(SCORE_PATH, scorePauses);
+  broadcast('score_resume', { name, ...scorePauses[name] });
+  addLog('tuning', `[${name}] Score-Pause manuell aufgehoben`);
+  res.json({ status: 'ok', name, score: scorePauses[name] });
+});
+
+// ── Memory API (V3) ───────────────────────────────────────────────────────────
+app.get('/api/memory', (req, res) => {
+  const { side = 'BUY' } = req.query;
+  const entries = Object.entries(memory).map(([key, m]) => {
+    const [modus, hour, weekday, s] = key.split('_');
+    const total = m.wins + m.losses;
+    const wr = total > 0 ? parseFloat((m.wins / total * 100).toFixed(1)) : null;
+    const adj = getMemoryAdjust(modus, parseInt(hour), parseInt(weekday), s);
+    return { key, modus, hour: parseInt(hour), weekday: parseInt(weekday), side: s, wins: m.wins, losses: m.losses, total, wr, adj };
+  }).filter(e => e.total >= MEMORY_CFG.MIN_OBS).sort((a, b) => (b.wr || 0) - (a.wr || 0));
+  res.json({ cfg: MEMORY_CFG, total_obs: Object.keys(memory).length, entries });
+});
+
+app.get('/api/memory/insight', (req, res) => {
+  const { side = 'BUY' } = req.query;
+  const insight = getMemoryInsight(null, side);
+  const currentAdj = getMemoryAdjust(marketMode.modus, new Date().getHours(), new Date().getDay(), side);
+  res.json({ currentModus: marketMode.modus, currentHour: new Date().getHours(), currentAdj, ...insight });
+});
+
+// ── Konfidenz-Schwellwert API ──────────────────────────────────────────────
 app.get('/api/confidence-threshold', (req, res) => res.json({
   basis:        BASIS_KONFIDENZ,
   aktuell:      getKonfidenzSchwelle(),
@@ -868,7 +1331,7 @@ app.get('/api/confidence-threshold', (req, res) => res.json({
   ),
 }));
 
-// ── Market Mode API ────────────────────────────────────────────────────────────
+// ── Market Mode API ──────────────────────────────────────────────────────────────
 app.get('/api/market-mode', (req, res) => res.json({ ...marketMode, config: MARKET_MODES }));
 
 app.post('/api/market-mode/refresh', async (req, res) => {
@@ -876,7 +1339,296 @@ app.post('/api/market-mode/refresh', async (req, res) => {
   res.json(marketMode);
 });
 
-// ── Health ─────────────────────────────────────────────────────────────────────
-app.get('/health', (req, res) => res.json({ status: 'ok', strategies: Object.keys(KONTEN).length, marketMode: marketMode.modus }));
 
-// ── Server starten ─────────────────────────────────�
+// ── Features API (fuer ml-service) ─────────────────────────────────────────────────
+app.get('/api/features/:name', async (req, res) => {
+  const { name } = req.params;
+  const limit = parseInt(req.query.limit) || 2000;
+  if (!db.available) return res.status(503).json({ error: 'Kein DB-Zugang (DATABASE_URL fehlt)' });
+  try {
+    const features = await db.getFeatures(name, limit);
+    res.json({ strategie: name, count: features.length, features });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Agent API ───────────────────────────────────────────────────────────
+app.get('/api/agents', (req, res) => {
+  const result = {};
+  for (const name of Object.keys(SETTINGS)) {
+    const ctx = {
+      name, side: 'BUY', entry: null, equity: performance[name]?.equity || 0, rrr: 2.5,
+      marketMode: marketMode.modus,
+      hour: new Date().getHours(), minute: new Date().getMinutes(), weekday: new Date().getDay(),
+      recentWR5: berechneWR(name, 5), recentWR15: berechneWR(name, 15), konsek: berechneKonsek(name),
+      slDistPct: null,
+    };
+    result[name] = aggregateAgents(ctx);
+  }
+  res.json(result);
+});
+
+// ── Meta-Learning API ──────────────────────────────────────────────────
+app.get('/api/meta', (req, res) => {
+  const result = {};
+  for (const name of Object.keys(SETTINGS)) {
+    const buf = mlPredBuffer[name] || [];
+    const withOutcome = buf.filter(e => e.win !== null);
+    const recentAcc = withOutcome.length
+      ? parseFloat((withOutcome.filter(e => e.win).length / withOutcome.length * 100).toFixed(1))
+      : null;
+    const avgConf = buf.length
+      ? parseFloat((buf.slice(-10).reduce((s,e) => s + e.konfidenz, 0) / Math.min(buf.length,10) * 100).toFixed(1))
+      : null;
+    const meta = (mlStatus || {})[name]?.meta;
+    const daysSince = meta?.trainiert_am
+      ? parseFloat(((Date.now() - new Date(meta.trainiert_am).getTime()) / (1000*60*60*24)).toFixed(1))
+      : null;
+    result[name] = {
+      bufferSize:       buf.length,
+      withOutcome:      withOutcome.length,
+      recentAcc,
+      avgConf,
+      daysSinceRetrain: daysSince,
+      modelAcc:         meta?.accuracy_cv ? parseFloat((meta.accuracy_cv*100).toFixed(1)) : null,
+    };
+  }
+  res.json(result);
+});
+
+// ── Event Bus API ─────────────────────────────────────────────────────
+app.get('/api/events', (req, res) => {
+  const n = parseInt(req.query.n) || 50;
+  res.json({ events: bus.replay(n), stats: bus.stats() });
+});
+
+// -- Deep Health + Metrics ------------------------------------------------------
+app.get('/api/health/deep', (req, res) => {
+  res.json({
+    status:       'ok',
+    ts:           new Date().toISOString(),
+    circuits:     Object.fromEntries(Object.entries(breakers).map(([k,v]) => [k, v.status()])),
+    dedup:        dedup.status(),
+    metrics:      metrics.snapshot(),
+    eventBus:     bus.stats(),
+    strategies: {
+      total:    Object.keys(SETTINGS).length,
+      paused:   Object.values(scorePauses).filter(s => s.paused).length,
+      active:   Object.values(aktiveTrades).filter(Boolean).length,
+    },
+    marketMode:   marketMode.modus,
+    mlPredBuffer: Object.fromEntries(Object.entries(mlPredBuffer).map(([k,v]) => [k, v.length])),
+    pendingPnL:   Object.keys(pendingFeatures),
+  });
+});
+
+// ── Signal Generator Status + Control ────────────────────────────────────────────────────────────────────
+app.get('/api/signal-generator', (req, res) => {
+  if (!sigGen) return res.json({ enabled: false, grund: 'SIGNAL_GEN_ENABLED nicht gesetzt' });
+  res.json({ enabled: true, ...sigGen.status() });
+});
+
+app.post('/api/signal-generator/start', (req, res) => {
+  if (!sigGen) return res.status(400).json({ error: 'Signal Generator nicht konfiguriert' });
+  sigGen.start();
+  res.json({ ok: true, msg: 'Signal Generator gestartet' });
+});
+
+app.post('/api/signal-generator/stop', (req, res) => {
+  if (!sigGen) return res.status(400).json({ error: 'Signal Generator nicht konfiguriert' });
+  sigGen.stop();
+  res.json({ ok: true, msg: 'Signal Generator gestoppt' });
+});
+
+// ── Audit Trail ─────────────────────────────────────────────────────────────────────────────────────────
+// Gibt die letzten N Events aus dem Bus-Ring-Buffer zurück (für Replay/Debug)
+app.get('/api/audit', (req, res) => {
+  const n    = Math.min(parseInt(req.query.n || '100', 10), 500);
+  const type = req.query.type;   // optional filter: ?type=SIGNAL_RECEIVED
+  let events = bus.replay(500);
+  if (type) events = events.filter(e => e.type === type);
+  res.json({ total: events.length, events: events.slice(-n) });
+});
+
+// Trace ein einzelnes Signal durch alle Stages via correlationId
+app.get('/api/audit/:correlationId', (req, res) => {
+  const { correlationId } = req.params;
+  const trace = bus.trace(correlationId);
+  if (!trace.length) return res.status(404).json({ error: 'correlationId nicht im Buffer gefunden' });
+  res.json({
+    correlationId,
+    stages: trace.length,
+    flow:   trace.map(e => ({
+      stage:     e.type,
+      stream:    e.stream,
+      source:    e.source,
+      ts:        new Date(e.timestamp).toISOString(),
+      ms:        e.timestamp,
+      approved:  e.payload?.approved,
+      grund:     e.payload?.grund || e.payload?.reason,
+      size:      e.payload?.size,
+      pnl:       e.payload?.pnl,
+    })),
+    first:  new Date(trace[0].timestamp).toISOString(),
+    last:   new Date(trace[trace.length-1].timestamp).toISOString(),
+    totalMs: trace[trace.length-1].timestamp - trace[0].timestamp,
+  });
+});
+
+// ── State Snapshot ──────────────────────────────────────────────────────────────────────────────────────
+// Authoritative full state für Dashboard-Resync nach WS-Reconnect
+app.get('/api/state', (req, res) => {
+  try {
+    const stateByStrategy = {};
+    for (const name of Object.keys(KONTEN)) {
+      const perf   = performance[name] || {};
+      const equity = perf.equity ?? perf.startEquity ?? 0;
+      const sp     = scorePauses[name] || {};
+      const ml     = mlStatus[name]    || {};
+      stateByStrategy[name] = {
+        equity,
+        startEquity:   perf.startEquity   ?? 0,
+        totalPnl:      perf.totalPnl      ?? 0,
+        winRate:       perf.winRate       ?? 0,
+        totalTrades:   perf.totalTrades   ?? 0,
+        score:         sp.score           ?? 50,
+        paused:        sp.paused          ?? false,
+        pauseGrund:    sp.grund           ?? null,
+        aktiv:         !!aktiveTrades[name],
+        mlTrainiert:   ml.trainiert       ?? false,
+        mlAccuracy:    ml.accuracy        ?? null,
+        mlNTrades:     ml.n_trades        ?? 0,
+        recentTrades:  (tradeHistory[name] || []).slice(-10).map(t => ({
+          ts:    t.ts,
+          side:  t.side,
+          pnl:   t.pnl,
+          grund: t.grund,
+        })),
+        equityHistory: (equityHistory[name] || []).slice(-50),
+      };
+    }
+
+    res.json({
+      ts:          new Date().toISOString(),
+      marketMode:  marketMode,
+      strategies:  stateByStrategy,
+      circuits:    Object.fromEntries(Object.entries(breakers).map(([k, v]) => [k, v.status()])),
+      dedup:       dedup.status(),
+      metricsSnap: metrics.snapshot(),
+      settings:    SETTINGS,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Health ─────────────────────────────────────────────────────────────────────────────────────────
+app.get('/health', (req, res) => res.json({
+  status:      'ok',
+  strategies:  Object.keys(KONTEN).length,
+  marketMode:  marketMode.modus,
+  db:          db.available ? 'postgresql' : 'json-fallback',
+  scorePaused: Object.values(scorePauses).filter(s => s.paused).length,
+}));
+
+// ── Server starten ──────────────────────────────────────────────────────────────────────────────
+async function startServer() {
+  if (db.available) {
+    try {
+      await db.init();
+      addLog('info', '🐘 PostgreSQL verbunden — lade Daten aus DB...');
+      for (const name of Object.keys(KONTEN)) {
+        try {
+          const dbTrades = await db.getTrades(name, 500);
+          if (dbTrades.length > 0) {
+            tradeHistory[name] = dbTrades;
+            addLog('info', `[${name}] ${dbTrades.length} Trades aus DB geladen`);
+          }
+        } catch {}
+        try {
+          const dbEquity = await db.getEquityHistory(name, 500);
+          if (dbEquity.length > 0) equityHistory[name] = dbEquity;
+        } catch {}
+        try {
+          const dbPerf = await db.getPerformance(name);
+          if (dbPerf) performance[name] = { ...performance[name], ...dbPerf };
+        } catch {}
+        try {
+          const dbStunden = await db.getStunden(name);
+          if (Object.keys(dbStunden).length > 0) stundenStats[name] = dbStunden;
+        } catch {}
+        try {
+          const dbTuning = await db.getTuning(name);
+          if (dbTuning.length > 0) tuningHistory[name] = dbTuning;
+        } catch {}
+      }
+      try {
+        const dbMM = await db.getMarketMode();
+        if (dbMM) marketMode = dbMM;
+      } catch {}
+      addLog('info', '🐘 DB-Sync abgeschlossen');
+    } catch (err) {
+      addLog('warn', `⚠️ DB-Init fehlgeschlagen (JSON-Fallback): ${err.message}`);
+    }
+  } else {
+    addLog('info', '📁 Kein DATABASE_URL — JSON-Fallback aktiv');
+  }
+
+  const riskEngine = new RiskEngine(() => ({
+    settings: SETTINGS,
+    performance,
+    marketMode,
+    marketModes: MARKET_MODES,
+    scorePauses,
+    tagesStart,
+  }));
+  addLog('info', '⚙️ Risk Engine initialisiert (Event Bus aktiv)');
+
+  server.listen(PORT, () => {
+    addLog('info', `🚀 Master Bot laeuft auf Port ${PORT} (DB: ${db.available ? 'PostgreSQL' : 'JSON'})`);
+    console.log(`Master Bot auf Port ${PORT}`);
+  });
+
+  // Market Mode alle 30 Min aktualisieren (+ sofort nach 5s)
+  setTimeout(analysiereMarktmodus, 5 * 1000);
+  setInterval(analysiereMarktmodus, 30 * 60 * 1000);
+
+  // ML-Status alle 5 Min aktualisieren
+  setInterval(aktualisiereMlStatus, 5 * 60 * 1000);
+
+  // Meta-Learning: Modell-Drift alle 60 Min pruefen (+ sofort nach 30s)
+  setTimeout(pruefeModelDrift, 30 * 1000);
+  setInterval(pruefeModelDrift, META_CFG.CHECK_INTERVAL * 60 * 1000);
+
+  // Strategie-Score alle 4h pruefen (+ sofort nach 10s)
+  setTimeout(pruefeAlleScores, 10 * 1000);
+  setInterval(pruefeAlleScores, 4 * 60 * 60 * 1000);
+
+  // Signal Generator (V4 #14) — eigene Signale ohne TradingView
+  if (process.env.SIGNAL_GEN_ENABLED === 'true') {
+    const sgStrategie = process.env.SIGNAL_GEN_STRATEGIE || Object.keys(KONTEN)[0];
+    sigGen = new SignalGenerator({
+      baseUrl:       BASE_URL,
+      getHeaders:    (name) => Promise.resolve(headers(name)),
+      ensureAuth:    ensureAuth,
+      addLog:        addLog,
+      strategie:     sgStrategie,
+      port:          PORT,
+      rrr:           process.env.SIGNAL_GEN_RRR       || '2.0',
+      atrSlFactor:   process.env.SIGNAL_GEN_ATR_SL    || '1.5',
+      intervalMs:    (parseInt(process.env.SIGNAL_GEN_INTERVAL || '60', 10)) * 1000,
+      epic:          process.env.SIGNAL_GEN_EPIC       || 'GOLD',
+      resolution:    process.env.SIGNAL_GEN_RESOLUTION || 'MINUTE',
+      candleCount:   parseInt(process.env.SIGNAL_GEN_CANDLES || '100', 10),
+      secret:        process.env.WEBHOOK_SECRET        || '',
+    });
+    sigGen.start();
+    addLog('info', '[SigGen] Signal Generator aktiv fuer ' + sgStrategie + ' (ENV: SIGNAL_GEN_ENABLED=true)');
+  } else {
+    addLog('info', '[SigGen] Signal Generator inaktiv (ENV: SIGNAL_GEN_ENABLED=false oder nicht gesetzt)');
+  }
+}
+
+startServer().catch(err => {
+  console.error('Startup-Fehler:', err);
+  process.exit(1);
+});

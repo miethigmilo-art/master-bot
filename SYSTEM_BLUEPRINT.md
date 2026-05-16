@@ -149,26 +149,4 @@ Execution Layer (Capital.com Paper/Live)
 3. **Datengetrieben** — alles messbar, keine Bauchentscheidungen
 4. **Iterativ** — V1 muss laufen bevor V2 startet
 5. **Spezialisierung** — Gold Bot kennt Gold besser als ein Generalist
-6. **Kein Over-Engineering** — einfachste Lösung die funktioniert
-
----
-
-## Tech Stack
-
-| Komponente | Technologie |
-|---|---|
-| Backend | Node.js + Express + WebSocket |
-| ML | XGBoost (kein PyTorch — optimal für tabellarische Daten) |
-| Datenbank | JSON → PostgreSQL (ab V2) |
-| Frontend | Vanilla JS → React (ab V3) |
-| Broker | Capital.com API |
-| Signale | TradingView Webhooks → später eigene Generierung |
-| Deployment | Railway |
-
----
-
-## GitHub Repos
-
-- master-bot: https://github.com/miethigmilo-art/master-bot
-- ml-service: https://github.com/miethigmilo-art/ml-service
-- trading-bot: https://github.com/miethigmilo-art/trading-bot
+6. **Ke

@@ -228,15 +228,4 @@ Der User muss können:
 - Network Graph View
 - Confidence Score Live-Anzeige pro Trade
 - Market Mode Anzeige (Smart Regime existiert, aber nicht prominent)
-- Animationen für alle Events
-
-**Reihenfolge:** Dashboard-Upgrade sinnvoll nach V2 (wenn Agenten-Architektur steht).
-
----
-
-## End Goal
-
-**Professional-grade:**
-- Hedge Fund Terminal
-- AI Command Center
-- Real-Time Decision Engine UI
+- An
