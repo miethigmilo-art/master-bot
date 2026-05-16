@@ -287,21 +287,101 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font-sans
 </head>
 <body><div id="root"></div>
 <script>
-// ── Auth Token Injection ──────────────────────────────────────────────────────
-// Read token from URL (?token=...) and auto-add to all /api/ fetch calls
+// ── Login Screen + Auth Token Injection ──────────────────────────────────────
 (function() {
-  const params = new URLSearchParams(window.location.search);
-  const _token = params.get('token') || sessionStorage.getItem('dashboard_token') || '';
-  if (_token) sessionStorage.setItem('dashboard_token', _token);
-  
-  const _origFetch = window.fetch.bind(window);
+  const DASHBOARD_TOKEN = 'tpqFsWvyLv9Wmciy72XPkpganF8QZLOupFLEDrPuZnUpybnoujWP';
+  const SESSION_KEY = 'helix_auth';
+
+  // Patch fetch to auto-add token to all API calls
+  const _orig = window.fetch.bind(window);
   window.fetch = function(url, opts) {
     if (typeof url === 'string' && url.startsWith('/api')) {
       const sep = url.includes('?') ? '&' : '?';
-      url = url + sep + 'token=' + encodeURIComponent(_token);
+      url = url + sep + 'token=' + encodeURIComponent(DASHBOARD_TOKEN);
     }
-    return _origFetch(url, opts);
+    return _orig(url, opts);
   };
+
+  // Show login if not authenticated
+  function isAuth() { return sessionStorage.getItem(SESSION_KEY) === '1'; }
+
+  function showLogin() {
+    const el = document.createElement('div');
+    el.id = 'helix-login';
+    el.innerHTML = `
+      <style>
+        #helix-login {
+          position:fixed;inset:0;background:#0a0d12;display:flex;
+          align-items:center;justify-content:center;z-index:99999;
+          font-family:'Inter',system-ui,sans-serif;
+        }
+        #helix-login .box {
+          background:#11161e;border:1px solid rgba(255,255,255,0.08);
+          border-radius:16px;padding:48px 40px;width:340px;text-align:center;
+          box-shadow:0 24px 80px rgba(0,0,0,0.6);
+        }
+        #helix-login .logo {
+          width:52px;height:52px;background:#6366f1;border-radius:13px;
+          display:inline-flex;align-items:center;justify-content:center;
+          font-size:22px;font-weight:700;color:#fff;margin-bottom:20px;
+        }
+        #helix-login h2 {
+          color:#f1f5f9;margin:0 0 6px;font-size:20px;font-weight:600;
+        }
+        #helix-login p {
+          color:#64748b;margin:0 0 28px;font-size:13px;
+        }
+        #helix-login input {
+          width:100%;padding:12px 16px;background:#0a0d12;
+          border:1px solid rgba(255,255,255,0.1);border-radius:10px;
+          color:#f1f5f9;font-size:15px;letter-spacing:2px;
+          outline:none;box-sizing:border-box;text-align:center;
+          transition:border-color .2s;
+        }
+        #helix-login input:focus { border-color:#6366f1; }
+        #helix-login button {
+          margin-top:14px;width:100%;padding:13px;background:#6366f1;
+          border:none;border-radius:10px;color:#fff;font-size:15px;
+          font-weight:600;cursor:pointer;transition:background .2s;
+        }
+        #helix-login button:hover { background:#4f46e5; }
+        #helix-login .err {
+          color:#ef4444;font-size:12px;margin-top:10px;min-height:18px;
+        }
+      </style>
+      <div class="box">
+        <div class="logo">H</div>
+        <h2>HELIX</h2>
+        <p>Trading System Dashboard</p>
+        <input id="hl-pw" type="password" placeholder="Passwort" autocomplete="current-password" />
+        <button id="hl-btn">Einloggen</button>
+        <div class="err" id="hl-err"></div>
+      </div>`;
+    document.body.appendChild(el);
+
+    function tryLogin() {
+      const pw = document.getElementById('hl-pw').value;
+      if (pw === '1kreuzberg') {
+        sessionStorage.setItem(SESSION_KEY, '1');
+        document.getElementById('helix-login').remove();
+      } else {
+        const err = document.getElementById('hl-err');
+        err.textContent = 'Falsches Passwort';
+        document.getElementById('hl-pw').value = '';
+        setTimeout(() => { err.textContent = ''; }, 2000);
+      }
+    }
+
+    document.getElementById('hl-btn').addEventListener('click', tryLogin);
+    document.getElementById('hl-pw').addEventListener('keydown', e => {
+      if (e.key === 'Enter') tryLogin();
+    });
+    setTimeout(() => document.getElementById('hl-pw')?.focus(), 50);
+  }
+
+  if (!isAuth()) {
+    document.addEventListener('DOMContentLoaded', showLogin);
+  }
 })();
 </script>
 <script>
