@@ -1772,6 +1772,42 @@ app.delete('/api/broker/sandbox-orders', (req, res) => {
 });
 
 
+
+// ── Strategies Status ─────────────────────────────────────────────────────────
+app.get('/api/strategies', (_req, res) => {
+  try { res.json(getStrategyStatus()); }
+  catch { res.json([]); }
+});
+
+// ── Recovery API ──────────────────────────────────────────────────────────────
+app.get('/api/recovery/snapshot', (req, res) => {
+  const { loadSnapshot } = require('./recovery');
+  const snap = loadSnapshot(path.join(DATA_DIR, 'snapshot.json'));
+  if (!snap) return res.json({ snapshot: null, msg: 'Kein Snapshot vorhanden' });
+  res.json({ snapshot: snap });
+});
+
+app.post('/api/recovery/reconcile', async (req, res) => {
+  try {
+    const result = await reconcileOnStartup({
+      broker,
+      strategies:      STRATEGY_IDS,
+      snapshotPath:    path.join(DATA_DIR, 'snapshot.json'),
+      addLog,
+      autoCloseOrphans: req.body?.autoClose === true,
+    });
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Root route (Dashboard) ────────────────────────────────────────────────────
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+
 // ── Health Check ─────────────────────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({
   status:      'ok',
