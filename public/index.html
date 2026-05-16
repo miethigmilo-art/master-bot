@@ -249,6 +249,41 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font-sans
 .sh-svc-table td{padding:8px 10px;border-bottom:1px solid var(--line);font-size:12px}
 .sh-svc-table td:not(:first-child){text-align:right;font-family:var(--font-mono)}
 .sh-svc-table tbody tr:hover{background:var(--bg-elev2)}
+/* ── Replay Screen ─────────────────────────────────────────────────────────── */
+.rp-list{display:flex;flex-direction:column;gap:4px;max-height:calc(100vh - 320px);overflow-y:auto}
+.rp-row{display:grid;grid-template-columns:auto 1fr auto auto auto auto;gap:12px;align-items:center;padding:9px 14px;background:var(--bg-elev);border:1px solid var(--line);border-radius:var(--radius-sm);cursor:pointer;transition:background .1s,border-color .1s;font-size:12px}
+.rp-row:hover{background:var(--bg-elev2);border-color:var(--line-strong)}
+.rp-outcome{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.rp-outcome.win{background:var(--pos)}.rp-outcome.loss{background:var(--neg)}.rp-outcome.unknown{background:var(--text-faint)}
+.rp-timeline{display:flex;flex-direction:column;gap:0}
+.rp-stage{display:grid;grid-template-columns:120px auto 1fr auto;gap:12px;padding:8px 12px;border-left:2px solid var(--line);margin-left:16px;position:relative;font-size:12px}
+.rp-stage::before{content:'';position:absolute;left:-5px;top:14px;width:8px;height:8px;border-radius:50%;background:var(--bg-elev2);border:2px solid var(--accent)}
+.rp-stage:first-child{border-color:var(--accent)}
+.rp-stage-type{font-family:var(--font-mono);font-size:10px;color:var(--accent)}
+.rp-delta{font-family:var(--font-mono);color:var(--text-faint);font-size:11px}
+.rp-empty{display:grid;place-items:center;height:200px;color:var(--text-faint);font-size:12px}
+/* ── Scanner Screen ─────────────────────────────────────────────────────────── */
+.sc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px}
+.sc-card{background:var(--bg-elev);border:1px solid var(--line);border-radius:var(--radius-sm);padding:14px 16px;display:flex;flex-direction:column;gap:8px}
+.sc-card.running{border-color:var(--accent)}
+.sc-epic{font-family:var(--font-mono);font-size:13px;font-weight:600}
+.sc-status{font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase}
+.sc-status.on{color:var(--pos)}.sc-status.off{color:var(--text-faint)}
+.sc-meta{font-size:11px;color:var(--text-dim)}
+.sc-form{display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end}
+.sc-form input,.sc-form select{height:30px;padding:0 10px;border-radius:var(--radius-sm);border:1px solid var(--line);background:var(--bg-elev);color:var(--text);font:inherit;font-size:12px;min-width:0}
+.sc-form input:focus,.sc-form select:focus{outline:none;border-color:var(--accent)}
+/* ── Portfolio Screen ───────────────────────────────────────────────────────── */
+.pf-heat{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
+.pf-heat-card{background:var(--bg-elev2);border-radius:var(--radius-sm);border:1px solid var(--line);padding:12px 14px;position:relative;overflow:hidden}
+.pf-heat-fill{position:absolute;left:0;top:0;bottom:0;background:var(--accent);opacity:.08;pointer-events:none}
+.pf-heat-epic{font-family:var(--font-mono);font-size:12px;font-weight:600}
+.pf-heat-strats{font-size:11px;color:var(--text-dim);margin-top:4px}
+.pf-risk-bar{height:10px;background:var(--bg-elev2);border-radius:5px;overflow:hidden;margin-top:6px;position:relative}
+.pf-risk-fill{height:100%;border-radius:5px;transition:width .4s ease}
+.pf-stat{display:flex;justify-content:space-between;align-items:baseline;padding:7px 0;border-bottom:1px solid var(--line);font-size:12px}
+.pf-stat:last-child{border-bottom:0}
+.pf-stat-val{font-family:var(--font-mono);font-weight:600}
 </style>
 </head>
 <body><div id="root"></div>
@@ -1481,74 +1516,4 @@ function SystemHealthScreen({ wsStatus }) {
       <div className="card">
         <div className="card-head">
           <span className="card-title">Dedup Cache</span>
-          <span className="faint mono">{Object.keys(dedup).length} entries</span>
-        </div>
-        <div style={{maxHeight:200,overflowY:'auto'}}>
-          {Object.entries(dedup).slice(0,20).map(([k,v]) => (
-            <div key={k} className="dd-row">
-              <span className="mono" style={{fontSize:11}}>{k.slice(0,20)+'…'}</span>
-              <span>{fmtTime(v)}</span>
-            </div>
-          ))}
-          {Object.keys(dedup).length===0 && <div style={{color:'var(--text-faint)',fontSize:12}}>Cache empty</div>}
-        </div>
-      </div>
-    </div>
-  </>);
-}
-
-// ─── Logs Screen ──────────────────────────────────────────────────────────
-function LogsScreen({ events }) {
-  const typeColor = type => {
-    if(['ORDER_PLACED','RISK_APPROVED','PNL_RECORDED'].includes(type)) return 'type-pos';
-    if(['ORDER_FAILED','ERROR','RISK_REJECTED'].includes(type)) return 'type-error';
-    if(['SIGNAL_RECEIVED','SIGNAL_ENRICHED'].includes(type)) return 'type-acc';
-    return '';
-  };
-  return (<>
-    <div className="card" style={{padding:0}}>
-      <div className="card-head" style={{padding:'12px 16px'}}>
-        <span className="card-title">Live Event Stream</span>
-        <span className="faint mono">{events.length} events</span>
-      </div>
-      <div className="log-list">
-        {events.slice(0,100).map((e,i) => (
-          <div key={i} className={`log-entry ${typeColor(e.type)}`}>
-            <span style={{color:'var(--text-faint)'}}>{e.timestamp?new Date(e.timestamp).toLocaleTimeString('en-GB'):'—'}</span>
-            <span style={{fontWeight:600}}>{e.type||'—'}</span>
-            <span style={{color:'var(--text-dim)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
-              {e.source} {e.payload?JSON.stringify(e.payload).slice(0,80):''}
-            </span>
-          </div>
-        ))}
-        {events.length===0 && <div style={{padding:'40px 16px',textAlign:'center',color:'var(--text-faint)',fontSize:12}}>Waiting for events… Connect to /ws</div>}
-      </div>
-    </div>
-  </>);
-}
-
-// ─── Drilldowns ───────────────────────────────────────────────────────────
-function TradeDrilldown({ trade, onClose }) {
-  if (!trade) return null;
-  return (<>
-    <div className={`drilldown-scrim ${trade?'open':''}`} onClick={onClose}/>
-    <aside className={`drilldown ${trade?'open':''}`}>
-      <div className="drilldown-head">
-        <div>
-          <div className="row" style={{gap:10,alignItems:'center'}}>
-            <h2 style={{margin:0,fontSize:18,fontWeight:600}}>{trade.pair||'Trade'}</h2>
-            <span className={`tag ${(trade.side||'').toLowerCase()==='buy'||trade.side==='LONG'?'long':'short'}`}>{trade.side}</span>
-          </div>
-          <div className="dim mono" style={{fontSize:11,marginTop:4}}>Strategy: {trade.strategyName||trade.strategy||'—'}</div>
-        </div>
-        <button className="dd-close" onClick={onClose}><Icon name="x" size={14}/></button>
-      </div>
-      <div className="drilldown-body">
-        <div className="kpi" style={{padding:16}}>
-          <div className="kpi-label"><span>Realized P&L</span></div>
-          <div className="kpi-value" style={{fontSize:32,color:trade.pnl>=0?'var(--pos)':'var(--neg)'}}>{fmtUSD(trade.pnl,{signed:true})}</div>
-        </div>
-        <div className="card" style={{gap:2}}>
-          <span className="card-title" style={{marginBottom:6}}>Execution Details</span>
-          <div className="dd-row"><span>Entry Price</span><span>{trade.entryPx||trade.entryPrice||trade.entry||'—'}</span></div>
-          <div classNam
+          <s
