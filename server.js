@@ -34,6 +34,7 @@ const { AutoRetrain } = require('./autoretrain');
 const { adaptiveSizingFactor } = require('./sizing');
 const { correlationFilter, trackPosition } = require('./correlation');
 const portfolioRisk = require('./portfolio');
+const { PortfolioManager } = require('./portfolio-manager');
 
 // ── Settings ──────────────────────────────────────────
 const SETTINGS_PATH = path.join(__dirname, 'settings.json');
@@ -45,22 +46,49 @@ function saveSettings() {
   fs.writeFileSync(SETTINGS_PATH, JSON.stringify(SETTINGS, null, 2));
 }
 
-// ── Konten ────────────────────────────────────────────
-const KONTEN = {
-  mittel:      { apiKey: process.env.API_KEY,            email: process.env.EMAIL,            password: process.env.PASSWORD,            cst: null, token: null },
-  aggressiv:   { apiKey: process.env.API_KEY_AGGRESSIV,  email: process.env.EMAIL_AGGRESSIV,  password: process.env.PASSWORD_AGGRESSIV,  cst: null, token: null },
-  smart:       { apiKey: process.env.API_KEY_GOLDGLOBE,  email: process.env.EMAIL_GOLDGLOBE,  password: process.env.PASSWORD_GOLDGLOBE,  cst: null, token: null },
-  konservativ: { apiKey: process.env.API_KEY_KONSERVATIV,email: process.env.EMAIL_KONSERVATIV,password: process.env.PASSWORD_KONSERVATIV, cst: null, token: null },
-  optimiert:   { apiKey: process.env.API_KEY_OPTIMIERT,  email: process.env.EMAIL_OPTIMIERT,  password: process.env.PASSWORD_OPTIMIERT,  cst: null, token: null },
-  test:        { apiKey: process.env.API_KEY_TEST,       email: process.env.EMAIL_TEST,       password: process.env.PASSWORD_TEST,       cst: null, token: null },
-  adaptive:    { apiKey: process.env.API_KEY_TEST2,      email: process.env.EMAIL_TEST2,      password: process.env.PASSWORD_TEST2,      cst: null, token: null },
-  steady:      { apiKey: process.env.API_KEY_STEADY,     email: process.env.EMAIL_STEADY,     password: process.env.PASSWORD_STEADY,     cst: null, token: null },
-};
+// ── Strategy Registry ────────────────────────────────
+// Strategies are defined by SETTINGS keys — no per-account credentials.
+// A single broker account (IBKR) is orchestrated centrally.
+// Set BROKER_ADAPTER=paper for simulation mode.
+const STRATEGY_IDS = Object.keys(SETTINGS);
 
-// ── Broker Abstraction ────────────────────────────────
-// Set BROKER_ADAPTER=paper in .env / Railway for dry-run mode.
-// Falls back to Capital.com adapter (uses KONTEN sessions above).
-const broker = createBroker(KONTEN);
+// ── Broker + Portfolio Manager ────────────────────────
+const broker = createBroker();   // reads BROKER_ADAPTER env var (default: ibkr)
+const portfolioManager = new PortfolioManager();
+
+// Wire broker events into EventBus
+broker.on('broker_event', (ev) => {
+  bus.emit_event(ev.type, 'broker', ev, ev.correlationId);
+  broadcast('broker_event', ev);
+});
+
+// Initialise virtual portfolios from SETTINGS
+// Each strategy gets an equal share by default; override via PORTFOLIO_CONFIG_JSON
+function initPortfolioAllocations() {
+  let customConfig = {};
+  try {
+    if (process.env.PORTFOLIO_CONFIG_JSON) customConfig = JSON.parse(process.env.PORTFOLIO_CONFIG_JSON);
+  } catch {}
+  const equalShare = parseFloat((100 / STRATEGY_IDS.length).toFixed(1));
+  for (const id of STRATEGY_IDS) {
+    const s = SETTINGS[id] || {};
+    portfolioManager.setAllocation(id, {
+      allocPct:       customConfig[id]?.allocPct       ?? equalShare,
+      maxDrawdownPct: customConfig[id]?.maxDrawdownPct ?? (s.maxDrawdownPct || 20),
+      maxExposurePct: customConfig[id]?.maxExposurePct ?? 60,
+      minRRR:         customConfig[id]?.minRRR         ?? (s.minRRR || 2.0),
+    });
+  }
+}
+initPortfolioAllocations();
+
+// Sync portfolio capital from broker balance periodically
+async function syncPortfolioCapital() {
+  try {
+    const balance = await broker.getBalance();
+    if (balance > 0) portfolioManager.setTotalCapital(balance);
+  } catch {}
+}
 
 // ── State ─────────────────────────────────────────────
 const PERF_PATH   = path.join(DATA_DIR, 'performance.json');
@@ -121,7 +149,7 @@ const MARKET_MODES = {
 
 function buildDefaultPerf() {
   const p = {};
-  Object.keys(KONTEN).forEach(n => { p[n] = { trades: 0, gewinn: 0, verlust: 0, gesamtPnL: 0, bester: 0, schlechtester: 0, equity: SETTINGS[n]?.startEquity || 1000, winRate: 0 }; });
+  STRATEGY_IDS.forEach(n => { p[n] = { trades: 0, gewinn: 0, verlust: 0, gesamtPnL: 0, bester: 0, schlechtester: 0, equity: SETTINGS[n]?.startEquity || 1000, winRate: 0 }; });
   return p;
 }
 
@@ -177,63 +205,53 @@ bus.subscribe('*', function(event) {
   } catch {}
 });
 
-// ── Capital.com Auth ──────────────────────────────────
-async function login(name) {
-  const k = KONTEN[name];
-  if (!k.apiKey || !k.email || !k.password) throw new Error(`Fehlende Credentials für ${name}`);
-  const res = await axios.post(`${BASE_URL}/session`,
-    { identifier: k.email, password: k.password },
-    { headers: { 'X-CAP-API-KEY': k.apiKey } });
-  k.cst   = res.headers['cst'];
-  k.token = res.headers['x-security-token'];
-  addLog('info', `✅ Login: ${name} (${k.email})`);
-}
-
-async function ensureAuth(name) {
-  if (!KONTEN[name].cst) await login(name);
-}
-
-function headers(name) {
-  const k = KONTEN[name];
-  return { 'X-CAP-API-KEY': k.apiKey, 'CST': k.cst, 'X-SECURITY-TOKEN': k.token };
-}
+// ── Broker Auth ──────────────────────────────────────
+// Auth is handled inside broker adapter (IBKRAdapter/PaperAdapter).
+async function ensureAuth(_name) { /* no-op — adapter manages connection */ }
 
 async function getEquity(name) {
-  try {
-    const res = await axios.get(`${BASE_URL}/accounts`, { headers: headers(name) });
-    const bal = res.data.accounts[0]?.balance;
-    return bal?.balance ?? bal?.available ?? bal;
-  } catch (err) {
-    if (err.response?.status === 401) { await login(name); return getEquity(name); }
-    throw err;
-  }
+  // Equity = strategy's virtual allocation within the single broker account
+  const vp = portfolioManager.get(name);
+  if (vp) return vp.currentEquity;
+  // Fallback: proportional share of total broker balance
+  const balance = await broker.getBalance().catch(() => 0);
+  return balance / Math.max(1, STRATEGY_IDS.length);
 }
 
 async function getPositions(name) {
-  const res = await axios.get(`${BASE_URL}/positions`, { headers: headers(name) });
-  return res.data.positions || [];
+  const positions = await broker.getPositions(name).catch(() => []);
+  // Filter to positions tagged with this strategyId (IBKR doesn't tag — return all)
+  return positions;
 }
 
-async function closePositions(name, epic) {
+
+async function placeOrder(strategyId, order) {
+  // Route through broker abstraction — adapter handles protocol details
+  // order must be in HELIX generic format: { symbol, assetClass, side, size,
+  //   stopLevel, profitLevel, strategyId, correlationId, ... }
+  return broker.placeOrder(strategyId, { ...order, strategyId });
+}
+
+async function closePositions(strategyId, symbol) {
+  // Close all open positions for this strategy+symbol via broker
   try {
-    const positions = await getPositions(name);
-    for (const p of positions.filter(x => x.market?.epic === epic)) {
-      await axios.delete(`${BASE_URL}/positions/${p.position.dealId}`, { headers: headers(name) });
-      addLog('info', `🔒 [${name}] Position geschlossen: ${p.position.dealId}`);
+    const positions = await broker.getPositions(strategyId);
+    const toClose = positions.filter(p =>
+      (!symbol || p.symbol === symbol || p.symbol === (symbol || '').toUpperCase())
+    );
+    for (const pos of toClose) {
+      const closeOrder = {
+        symbol:      pos.symbol,
+        assetClass:  pos.assetClass || 'commodity',
+        side:        pos.side === 'BUY' ? 'SELL' : 'BUY',
+        size:        pos.size,
+        orderType:   'MKT',
+        strategyId,
+      };
+      await broker.placeOrder(strategyId, closeOrder);
     }
-  } catch (err) { addLog('warn', `⚠️ [${name}] closePositions: ${err.message}`); }
-}
-
-async function placeOrder(name, order) {
-  try {
-    return await axios.post(`${BASE_URL}/positions`, order, { headers: headers(name) });
   } catch (err) {
-    if (err.response?.status === 401) {
-      addLog('info', `🔄 [${name}] Session erneuert, wiederhole Order...`);
-      await login(name);
-      return await axios.post(`${BASE_URL}/positions`, order, { headers: headers(name) });
-    }
-    throw err;
+    addLog('warn', `⚠️ [${strategyId}] closePositions: ${err.message}`);
   }
 }
 
@@ -460,7 +478,7 @@ async function pruefeStrategieScore(name) {
 
 async function pruefeAlleScores() {
   addLog('info', '📊 Strategie-Score Check...');
-  for (const name of Object.keys(KONTEN)) {
+  for (const name of STRATEGY_IDS) {
     try { await pruefeStrategieScore(name); } catch {}
   }
   broadcast('score_status', scorePauses);
@@ -730,25 +748,22 @@ function berechneATR(candles, periode = 14) {
 }
 
 async function analysiereMarktmodus() {
-  // Eingeloggtes Konto finden
-  let name = null;
-  for (const n of Object.keys(KONTEN)) { if (KONTEN[n].cst) { name = n; break; } }
-  if (!name) {
-    for (const n of Object.keys(KONTEN)) {
-      if (KONTEN[n].apiKey && KONTEN[n].email && KONTEN[n].password) {
-        try { await ensureAuth(n); name = n; break; } catch {}
-      }
-    }
+  // Market data source is broker-agnostic.
+  // Set MARKET_DATA_URL to any OHLC REST endpoint (e.g. Alpha Vantage, Polygon.io).
+  // If not configured, market mode detection is skipped.
+  const marketDataUrl = process.env.MARKET_DATA_URL;
+  if (!marketDataUrl) {
+    addLog('info', '📊 Market Mode: MARKET_DATA_URL not set — keeping last known mode');
+    return;
   }
-  if (!name) { addLog('warn', '⚠️ Market Mode: Kein verfügbares Konto für Marktdaten'); return; }
+  const symbol = process.env.MARKET_DATA_SYMBOL || 'XAUUSD';
 
   try {
-    const res = await axios.get(`${BASE_URL}/prices/GOLD`, {
-      headers: headers(name),
-      params:  { resolution: 'HOUR', max: 100 },
+    const res = await axios.get(marketDataUrl, {
+      params:  { symbol, resolution: 'HOUR', max: 100 },
       timeout: 10000,
     });
-    const candles = res.data.prices;
+    const candles = res.data.prices || res.data.candles || (Array.isArray(res.data) ? res.data : null);
     if (!candles || candles.length < 55) {
       addLog('warn', `⚠️ Market Mode: Zu wenig Kerzen (${candles?.length || 0})`);
       return;
@@ -991,10 +1006,31 @@ async function handleWebhook(req, res, name) {
     const riskCapital  = equity * (s.riskPct / 100) * sizingFaktor;
     const size = slDist > 0 ? Math.max(1, parseFloat((riskCapital / slDist).toFixed(1))) : 1;
 
-    const order = { epic, direction: side, size, guaranteedStop: false, stopLevel: slF, profitLevel: tpF };
+    const order = {
+      symbol:        epic,                         // instrument from signal payload
+      assetClass:    body.assetClass || 'commodity', // from signal or default
+      side,
+      size,
+      orderType:     'MKT',
+      stopLevel:     slF,
+      profitLevel:   tpF,
+      strategyId:    name,
+      correlationId,
+    };
     addLog('info', `\u{1F4E4} [${name}] Order: ${JSON.stringify(order)}`);
     const _t1 = Date.now();
-    await breakers.broker.call(() => placeOrder(name, order));
+    // ── Portfolio Risk Gate (HELIX Governance) ──────────────────────────────
+    const orderValueUSD = riskCapital;  // estimated notional
+    const riskCheck = portfolioManager.checkRisk(name, orderValueUSD, rrr);
+    if (!riskCheck.approved) {
+      addLog('warn', `🛡️ [${name}] Portfolio Risk blocked: ${riskCheck.reason}`);
+      logFeature(name, side, equity, rrr, false, `PortfolioRisk: ${riskCheck.reason}`, extras);
+      bus.emit_event(EVENT_TYPES.RISK_BLOCKED, 'portfolio_manager', { strategie: name, reason: riskCheck.reason, correlationId });
+      return res.json({ status: 'blocked', reason: riskCheck.reason });
+    }
+
+    const result = await breakers.broker.call(() => placeOrder(name, order));
+    portfolioManager.openPosition(name, orderValueUSD);
     metrics.timing('broker_latency', Date.now() - _t1);
     metrics.inc('orders_placed');
 
@@ -1121,13 +1157,13 @@ app.post('/pnl/:name', async (req, res) => {
 app.post('/webhook/update_sl/:name', async (req, res) => {
   const { name } = req.params;
   const { sl, epic = 'GOLD' } = req.body;
-  if (!sl || !KONTEN[name]) return res.status(400).json({ error: 'Ungültig' });
+  if (!sl || !STRATEGY_IDS.includes(name)) return res.status(400).json({ error: 'Ungültig' });
   try {
     await ensureAuth(name);
     const positions = await getPositions(name);
     const pos = positions.find(p => p.market?.epic === epic);
     if (!pos) return res.json({ status: 'keine Position' });
-    await axios.put(`${BASE_URL}/positions/${pos.position.dealId}`, { stopLevel: parseFloat(sl) }, { headers: headers(name) });
+    await broker.modifyOrder(name, pos?.dealId || pos?.position?.dealId, { stopLevel: parseFloat(sl) });
     res.json({ status: 'ok', sl });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -1149,7 +1185,7 @@ app.post('/api/settings/:name', (req, res) => {
 // ── Performance API ───────────────────────────────────────────────
 app.get('/api/performance', async (req, res) => {
   const result = {};
-  for (const name of Object.keys(KONTEN)) {
+  for (const name of STRATEGY_IDS) {
     try {
       await ensureAuth(name);
       performance[name].equity = await getEquity(name);
@@ -1166,7 +1202,7 @@ app.get('/api/trades/:name', (req, res) => res.json(tradeHistory[req.params.name
 // ── Positionen API ──────────────────────────────────────────────────
 app.get('/api/positions', async (req, res) => {
   const result = {};
-  for (const name of Object.keys(KONTEN)) {
+  for (const name of STRATEGY_IDS) {
     try {
       await ensureAuth(name);
       result[name] = await getPositions(name);
@@ -1187,6 +1223,34 @@ app.post('/api/smart/reset', async (req, res) => {
 });
 
 // ── ML API ─────────────────────────────────────────────────────────────────
+// ── Portfolio Manager API ──────────────────────────────────────────────────────
+app.get('/api/portfolio', (_req, res) => res.json(portfolioManager.snapshot()));
+
+app.post('/api/portfolio/:id/resume', (req, res) => {
+  const id = req.params.id;
+  if (!STRATEGY_IDS.includes(id)) return res.status(404).json({ error: 'Not found' });
+  portfolioManager.resume(id);
+  res.json({ ok: true });
+});
+
+app.post('/api/portfolio/:id/allocate', (req, res) => {
+  const id = req.params.id;
+  if (!STRATEGY_IDS.includes(id)) return res.status(404).json({ error: 'Not found' });
+  portfolioManager.setAllocation(id, req.body);
+  res.json({ ok: true, snapshot: portfolioManager.get(id)?.snapshot() });
+});
+
+// ── Broker API ─────────────────────────────────────────────────────────────────
+app.get('/api/broker/health', async (_req, res) => {
+  try { res.json(await broker.healthCheck()); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/broker/reconnect', async (_req, res) => {
+  try { await broker.reconnect(); res.json({ ok: true }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/api/ml-status', async (req, res) => {
   await aktualisiereMlStatus();
   res.json({ url: ML_URL, status: mlStatus });
@@ -1222,7 +1286,7 @@ app.post('/api/tuning/reset/:name', (req, res) => {
 // Analyse aller Strategien aus vorhandener Trade-History
 app.get('/api/backtest/analyze', (req, res) => {
   const result = {};
-  for (const name of Object.keys(KONTEN)) {
+  for (const name of STRATEGY_IDS) {
     const trades = tradeHistory[name] || [];
     const metriken = BT.berechneMetriken(trades);
     result[name] = {
@@ -1240,7 +1304,7 @@ app.get('/api/backtest/analyze', (req, res) => {
 // Strategie-Scores (kompakt, fuer Dashboard)
 app.get('/api/strategy-scores', (req, res) => {
   const scores = {};
-  for (const name of Object.keys(KONTEN)) {
+  for (const name of STRATEGY_IDS) {
     const trades   = tradeHistory[name] || [];
     const metriken = BT.berechneMetriken(trades);
     scores[name] = {
@@ -1259,11 +1323,11 @@ app.get('/api/strategy-scores', (req, res) => {
 app.post('/api/backtest/run', async (req, res) => {
   const { epic = 'GOLD', resolution = 'HOUR', count = 500, ema_schnell = 9, ema_langsam = 21, slPct = 0.5, rrr = 2.0 } = req.body;
   let name = null;
-  for (const n of Object.keys(KONTEN)) { if (KONTEN[n].cst) { name = n; break; } }
+  for (const n of STRATEGY_IDS) { if (false  /* IBKR: no per-account sessions */) { name = n; break; } }
   if (!name) return res.status(503).json({ error: 'Kein aktives Konto' });
   try {
     addLog('info', `Backtest: ${epic} ${resolution} (${count} Kerzen, EMA${ema_schnell}/${ema_langsam})`);
-    const candles = await BT.fetchCandles(BASE_URL, headers(name), epic, resolution, count);
+    const candles = await BT.fetchCandles(process.env.MARKET_DATA_URL || BASE_URL, {}, epic, resolution, count);
     if (candles.length < 50) return res.status(400).json({ error: `Zu wenig Kerzen: ${candles.length}` });
     const result = BT.preisBacktest(candles, { ema_schnell, ema_langsam, slPct, rrr });
     addLog('info', `Backtest fertig: ${result.signale} Trades, WR ${result.metriken?.winRate ?? '?'}%, PF ${result.metriken?.profitFactor ?? '?'}`);
@@ -1285,7 +1349,7 @@ app.get('/api/backtest/signals', (req, res) => {
 // ── Score API (V2 Item 7) ──────────────────────────────────────────────────────
 app.get('/api/score-status', (req, res) => {
   const result = {};
-  for (const name of Object.keys(KONTEN)) {
+  for (const name of STRATEGY_IDS) {
     const trades   = tradeHistory[name] || [];
     const metriken = BT.berechneMetriken(trades);
     const score    = BT.berechneStrategieScore(metriken);
@@ -1312,7 +1376,7 @@ app.post('/api/score/check', async (req, res) => {
 
 app.post('/api/score/resume/:name', async (req, res) => {
   const { name } = req.params;
-  if (!KONTEN[name]) return res.status(404).json({ error: 'Strategie nicht gefunden' });
+  if (!STRATEGY_IDS.includes(name)) return res.status(404).json({ error: 'Strategie nicht gefunden' });
   const prev = scorePauses[name] || {};
   scorePauses[name] = { ...prev, paused: false, grund: 'Manuell entsperrt', geaendertAm: new Date().toISOString() };
   saveJSON(SCORE_PATH, scorePauses);
@@ -1529,7 +1593,7 @@ app.use('/api/replay', createReplayRouter(replayEngine, handleWebhook));
 app.get('/api/state', (req, res) => {
   try {
     const stateByStrategy = {};
-    for (const name of Object.keys(KONTEN)) {
+    for (const name of STRATEGY_IDS) {
       const perf   = performance[name] || {};
       const equity = perf.equity ?? perf.startEquity ?? 0;
       const sp     = scorePauses[name] || {};
@@ -1583,7 +1647,7 @@ app.post('/api/recovery/reconcile', async (req, res) => {
   try {
     const result = await reconcileOnStartup({
       broker,
-      konten:          KONTEN,
+      strategies:      STRATEGY_IDS,
       snapshotPath:    path.join(DATA_DIR, 'snapshot.json'),
       addLog,
       autoCloseOrphans: req.body?.autoClose === true,
@@ -1602,7 +1666,7 @@ app.get('/', (req, res) => {
 
 app.get('/health', (req, res) => res.json({
   status:      'ok',
-  strategies:  Object.keys(KONTEN).length,
+  strategies:  STRATEGY_IDS.length,
   marketMode:  marketMode.modus,
   db:          db.available ? 'postgresql' : 'json-fallback',
   scorePaused: Object.values(scorePauses).filter(s => s.paused).length,
@@ -1614,7 +1678,7 @@ async function startServer() {
     try {
       await db.init();
       addLog('info', '🐘 PostgreSQL verbunden — lade Daten aus DB...');
-      for (const name of Object.keys(KONTEN)) {
+      for (const name of STRATEGY_IDS) {
         try {          const dbTrades = await db.getTrades(name, 500);
           if (dbTrades.length > 0) {
             tradeHistory[name] = dbTrades;
@@ -1685,7 +1749,7 @@ async function startServer() {
   // Run non-blocking — don't delay server start
   reconcileOnStartup({
     broker,
-    konten:          KONTEN,
+    strategies:      STRATEGY_IDS,
     snapshotPath:    SNAPSHOT_PATH,
     addLog,
     autoCloseOrphans: process.env.AUTO_CLOSE_ORPHANS === 'true',
@@ -1716,6 +1780,8 @@ async function startServer() {
   // ── Market Mode alle 30 Min aktualisieren (+ sofort nach 5s)
   setTimeout(analysiereMarktmodus, 5 * 1000);
   setInterval(analysiereMarktmodus, 30 * 60 * 1000);
+  setInterval(syncPortfolioCapital, 5 * 60 * 1000);
+  setTimeout(syncPortfolioCapital, 5000);
 
   // ML-Status alle 5 Min aktualisieren
   setInterval(aktualisiereMlStatus, 5 * 60 * 1000);
@@ -1734,7 +1800,7 @@ async function startServer() {
   if (process.env.SIGNAL_GEN_ENABLED === 'true') {
     sigGen = new MultiAssetScanner({
       baseUrl:      BASE_URL,
-      getHeaders:   (name) => Promise.resolve(headers(name)),
+      getHeaders:   (_name) => Promise.resolve({}),
       ensureAuth:   ensureAuth,
       addLog:       addLog,
       port:         PORT,

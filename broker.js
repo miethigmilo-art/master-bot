@@ -1,288 +1,547 @@
+'use strict';
 /**
- * broker.js — HELIX Broker Abstraction Layer
+ * broker.js — HELIX Broker Abstraction Layer v2
  *
- * Unified interface for all broker adapters.
- * Every adapter must implement:
- *   placeOrder(accountId, order)   → { dealId, status }
- *   cancelOrder(accountId, dealId) → void
- *   getPositions(accountId)        → Position[]
- *   getBalance(accountId)          → number
- *   streamPrices(epic, callback)   → unsubscribe fn
+ * Architecture:  HELIX → BrokerAdapter interface → Concrete Adapter → Exchange
  *
- * Active adapter is selected via env BROKER_ADAPTER (default: 'capitalcom')
- * Set BROKER_ADAPTER=paper for dry-run paper trading.
+ * Adapters:
+ *   IBKRAdapter   — Interactive Brokers TWS API (primary, via IB Gateway)
+ *   PaperAdapter  — In-process simulation (dry-run / CI)
+ *   OandaAdapter  — OANDA REST API (stub, ready to implement)
+ *   AlpacaAdapter — Alpaca REST API (stub, ready to implement)
+ *
+ * Selection: BROKER_ADAPTER env var
+ *   'ibkr'  (default) — requires IB Gateway running
+ *   'paper'            — in-process simulation, no external deps
+ *   'oanda' / 'alpaca' — stubs
+ *
+ * Generic HELIX order (adapters translate to broker-specific format):
+ *   {
+ *     symbol:        'XAUUSD',           // never hardcoded — comes from signal
+ *     assetClass:    'commodity',        // 'forex'|'stock'|'future'|'commodity'|'cfd'
+ *     side:          'BUY'|'SELL',
+ *     size:          1.5,
+ *     orderType:     'MKT'|'LMT'|'STP', // default MKT
+ *     limitPrice:    null,               // LMT orders
+ *     stopPrice:     null,               // STP orders
+ *     stopLevel:     1900.00,            // stop-loss price
+ *     profitLevel:   1950.00,            // take-profit price
+ *     strategyId:    'momentum_v3',
+ *     correlationId: 'uuid',
+ *     tif:           'GTC',
+ *   }
+ *
+ * Normalised Position:
+ *   { symbol, side, size, avgPrice, unrealisedPnl, strategyId }
  */
 
-'use strict';
+const EventEmitter = require('events');
 
-const axios = require('axios');
+// ─────────────────────────────────────────────────────────────────────────────
+// Base Adapter Interface
+// ─────────────────────────────────────────────────────────────────────────────
+class BrokerAdapter extends EventEmitter {
+  constructor(name) {
+    super();
+    this.name        = name;
+    this._connected  = false;
+    this._latencyMs  = 0;
+    this._reconnects = 0;
+    this._errors     = 0;
+    this._lastError  = null;
+  }
 
-// ── Base class ──────────────────────────────────────────────────────────────
-class BrokerAdapter {
-  constructor(name) { this.name = name; }
-  async placeOrder(accountId, order)   { throw new Error(`${this.name}.placeOrder not implemented`); }
-  async cancelOrder(accountId, dealId) { throw new Error(`${this.name}.cancelOrder not implemented`); }
-  async getPositions(accountId)        { throw new Error(`${this.name}.getPositions not implemented`); }
-  async getBalance(accountId)          { throw new Error(`${this.name}.getBalance not implemented`); }
-  streamPrices(epic, cb)               { throw new Error(`${this.name}.streamPrices not implemented`); }
+  async placeOrder(strategyId, order)        { throw new Error(`${this.name}.placeOrder not implemented`); }
+  async cancelOrder(strategyId, dealId)      { throw new Error(`${this.name}.cancelOrder not implemented`); }
+  async modifyOrder(strategyId, dealId, upd) { throw new Error(`${this.name}.modifyOrder not implemented`); }
+  async getPositions(strategyId)             { throw new Error(`${this.name}.getPositions not implemented`); }
+  async getBalance()                         { throw new Error(`${this.name}.getBalance not implemented`); }
+  streamPrices(symbol, assetClass, callback) { throw new Error(`${this.name}.streamPrices not implemented`); }
+  streamOrders(callback)                     { throw new Error(`${this.name}.streamOrders not implemented`); }
+  async reconnect()                          { throw new Error(`${this.name}.reconnect not implemented`); }
+  async healthCheck()                        { throw new Error(`${this.name}.healthCheck not implemented`); }
+
+  health() {
+    return {
+      adapter:    this.name,
+      connected:  this._connected,
+      latencyMs:  this._latencyMs,
+      reconnects: this._reconnects,
+      errors:     this._errors,
+      lastError:  this._lastError,
+    };
+  }
+
+  _recordLatency(ms) { this._latencyMs = ms; }
+
+  _recordError(msg) {
+    this._errors++;
+    this._lastError = { msg, ts: new Date().toISOString() };
+    this.emit('broker_event', { type: 'broker_error', adapter: this.name, msg, ts: this._lastError.ts });
+  }
 }
 
-// ── Capital.com Adapter ─────────────────────────────────────────────────────
-class CapitalComAdapter extends BrokerAdapter {
-  constructor(sessions, baseUrl) {
-    super('capitalcom');
-    // sessions: { [strategyName]: { apiKey, email, password, cst, token } }
-    this._sessions = sessions;
-    this._baseUrl  = baseUrl || process.env.BASE_URL;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IBKR Adapter  (Interactive Brokers, via @stoqey/ib → IB Gateway socket)
+//
+// IB Gateway setup options:
+//   A) Docker: ghcr.io/gnzsnz/ib-gateway  (recommended for Railway)
+//      IBKR_HOST=ibkr-gateway  IBKR_PORT=4002 (paper) / 4001 (live)
+//   B) Local TWS: IBKR_HOST=127.0.0.1  IBKR_PORT=7497 (paper) / 7496 (live)
+//
+// Required env vars:
+//   IBKR_HOST, IBKR_PORT, IBKR_CLIENT_ID, IBKR_ACCOUNT
+//
+// Optional env vars:
+//   IBKR_CONTRACTS_JSON — JSON map of custom symbol→contract overrides
+//   IBKR_FUT_EXPIRY     — futures expiry e.g. '202509'
+// ─────────────────────────────────────────────────────────────────────────────
+class IBKRAdapter extends BrokerAdapter {
+  constructor() {
+    super('ibkr');
+    this._host      = process.env.IBKR_HOST      || 'localhost';
+    this._port      = parseInt(process.env.IBKR_PORT || '4002', 10);
+    this._clientId  = parseInt(process.env.IBKR_CLIENT_ID || '1', 10);
+    this._account   = process.env.IBKR_ACCOUNT   || '';
+
+    this._ib             = null;
+    this._nextOrderId    = 1;
+    this._pendingOrders  = new Map();  // orderId → { resolve, reject, strategyId, correlationId }
+    this._positions      = new Map();  // symbol → Position
+    this._priceStreams   = new Map();  // tickerId → { symbol, assetClass, callback, bid, ask, last }
+    this._nextTickerId   = 100;
+    this._accountCache   = { balance: 0, ts: 0 };
+    this._reconnectTimer = null;
+    this._reconnectDelay = 2000;
+
+    this._initIB();
   }
 
-  _headers(accountId) {
-    const k = this._sessions[accountId];
-    if (!k) throw new Error(`Kein Konto konfiguriert für: ${accountId}`);
-    return { 'X-CAP-API-KEY': k.apiKey, 'CST': k.cst, 'X-SECURITY-TOKEN': k.token };
-  }
-
-  async _login(accountId) {
-    const k = this._sessions[accountId];
-    if (!k?.apiKey || !k?.email || !k?.password)
-      throw new Error(`Fehlende Credentials für ${accountId}`);
-    const res = await axios.post(`${this._baseUrl}/session`,
-      { identifier: k.email, password: k.password },
-      { headers: { 'X-CAP-API-KEY': k.apiKey } });
-    k.cst   = res.headers['cst'];
-    k.token = res.headers['x-security-token'];
-  }
-
-  async _ensureAuth(accountId) {
-    if (!this._sessions[accountId]?.cst) await this._login(accountId);
-  }
-
-  async _withRetry(accountId, fn) {
+  _initIB() {
+    let IBApi, EventName, OrderAction, OrderType, SecType;
     try {
-      return await fn();
-    } catch (err) {
-      if (err.response?.status === 401) {
-        await this._login(accountId);
-        return await fn();
+      ({ IBApi, EventName, OrderAction, OrderType, SecType } = require('@stoqey/ib'));
+    } catch (e) {
+      console.error('[IBKR] @stoqey/ib not installed. Run: npm install @stoqey/ib');
+      console.error('[IBKR] Falling back to paper mode behaviour until installed.');
+      this._recordError('module_missing: @stoqey/ib — run npm install @stoqey/ib');
+      return;
+    }
+
+    this._IBEnums = { OrderAction, OrderType, SecType };
+
+    const ib = new IBApi({ host: this._host, port: this._port, clientId: this._clientId });
+    this._ib = ib;
+
+    ib.on(EventName.connected, () => {
+      this._connected = true;
+      this._reconnectDelay = 2000;
+      console.log(`[IBKR] Connected → ${this._host}:${this._port}`);
+      this.emit('broker_event', { type: 'connected', adapter: 'ibkr', ts: new Date().toISOString() });
+      ib.reqIds(1);
+      ib.reqPositions();
+      if (this._account)
+        ib.reqAccountSummary(1, 'All', 'TotalCashValue,NetLiquidation,AvailableFunds');
+    });
+
+    ib.on(EventName.disconnected, () => {
+      this._connected = false;
+      console.warn('[IBKR] Disconnected — scheduling reconnect');
+      this.emit('broker_event', { type: 'reconnect', adapter: 'ibkr', ts: new Date().toISOString() });
+      this._scheduleReconnect();
+    });
+
+    ib.on(EventName.nextValidId, (orderId) => {
+      this._nextOrderId = orderId;
+      console.log(`[IBKR] nextValidId=${orderId}`);
+    });
+
+    ib.on(EventName.orderStatus, (orderId, status, filled, remaining, avgFillPrice) => {
+      const pending = this._pendingOrders.get(orderId);
+      const ts = new Date().toISOString();
+      this.emit('broker_event', {
+        type: 'order_status', adapter: 'ibkr', orderId, status,
+        filled, remaining, avgFillPrice, ts,
+        strategyId:    pending?.strategyId,
+        correlationId: pending?.correlationId,
+      });
+      if (status === 'Filled' && pending) {
+        this._recordLatency(Date.now() - (pending.t0 || Date.now()));
+        pending.resolve({ dealId: String(orderId), status: 'filled', filled, avgFillPrice });
+        this._pendingOrders.delete(orderId);
+        this.emit('broker_event', {
+          type: 'fill_received', adapter: 'ibkr', orderId, filled, avgFillPrice, ts,
+          strategyId: pending.strategyId, correlationId: pending.correlationId,
+        });
+      } else if (['Cancelled', 'Inactive', 'ApiCancelled'].includes(status) && pending) {
+        pending.reject(new Error(`Order ${orderId} ${status}`));
+        this._pendingOrders.delete(orderId);
       }
-      throw err;
+    });
+
+    ib.on(EventName.position, (account, contract, pos, avgCost) => {
+      const symbol = contract.symbol;
+      if (pos === 0) {
+        this._positions.delete(symbol);
+      } else {
+        this._positions.set(symbol, {
+          symbol, side: pos > 0 ? 'BUY' : 'SELL',
+          size: Math.abs(pos), avgPrice: avgCost, unrealisedPnl: null,
+        });
+      }
+    });
+
+    ib.on(EventName.accountSummary, (reqId, account, tag, value) => {
+      if (['NetLiquidation', 'TotalCashValue'].includes(tag)) {
+        this._accountCache = { balance: parseFloat(value) || 0, ts: Date.now() };
+      }
+    });
+
+    ib.on(EventName.tickPrice, (tickerId, field, price) => {
+      const stream = this._priceStreams.get(tickerId);
+      if (!stream || price <= 0) return;
+      if (field === 1) stream.bid = price;
+      if (field === 2) stream.ask = price;
+      if (field === 4) stream.last = price;
+      if (stream.bid || stream.ask)
+        stream.callback({ symbol: stream.symbol, bid: stream.bid, ask: stream.ask, last: stream.last, ts: Date.now() });
+    });
+
+    ib.on(EventName.error, (id, code, msg) => {
+      // Codes 1100-2999: mostly informational / warnings
+      if (code >= 1100 && code < 3000) {
+        console.warn(`[IBKR] Info ${code}: ${msg}`);
+        this.emit('broker_event', { type: 'broker_warning', adapter: 'ibkr', code, msg, ts: new Date().toISOString() });
+        return;
+      }
+      console.error(`[IBKR] Error ${code} (id=${id}): ${msg}`);
+      this._recordError(`${code}: ${msg}`);
+      const pending = this._pendingOrders.get(id);
+      if (pending) {
+        pending.reject(new Error(`IBKR error ${code}: ${msg}`));
+        this._pendingOrders.delete(id);
+        this.emit('broker_event', {
+          type: 'rejected_order', adapter: 'ibkr', orderId: id, code, msg, ts: new Date().toISOString(),
+          strategyId: pending.strategyId, correlationId: pending.correlationId,
+        });
+      }
+    });
+
+    ib.connect();
+  }
+
+  _scheduleReconnect() {
+    if (this._reconnectTimer) return;
+    this._reconnects++;
+    this._reconnectTimer = setTimeout(() => {
+      this._reconnectTimer = null;
+      this._reconnectDelay = Math.min(60000, this._reconnectDelay * 2);
+      console.log(`[IBKR] Reconnect #${this._reconnects}…`);
+      try { this._ib?.connect(); } catch {}
+    }, this._reconnectDelay);
+  }
+
+  /** Resolve generic HELIX symbol → IBKR Contract object */
+  _resolveContract(symbol, assetClass) {
+    const { SecType } = this._IBEnums || {};
+    const sym = (symbol || '').toUpperCase();
+
+    // Custom overrides via env (JSON map: {"XAUUSD": {...contractFields}})
+    if (process.env.IBKR_CONTRACTS_JSON) {
+      try {
+        const custom = JSON.parse(process.env.IBKR_CONTRACTS_JSON);
+        if (custom[sym]) return custom[sym];
+      } catch {}
+    }
+
+    switch ((assetClass || '').toLowerCase()) {
+      case 'forex':
+        return { symbol: sym.slice(0, 3), secType: 'CASH', exchange: 'IDEALPRO', currency: sym.slice(3) || 'USD' };
+      case 'commodity': case 'cmdty':
+        if (sym === 'XAUUSD' || sym === 'GOLD')
+          return { symbol: 'XAUUSD', secType: 'CMDTY', exchange: 'SMART', currency: 'USD' };
+        if (sym === 'XAGUSD' || sym === 'SILVER')
+          return { symbol: 'XAGUSD', secType: 'CMDTY', exchange: 'SMART', currency: 'USD' };
+        return { symbol: sym, secType: 'CMDTY', exchange: 'SMART', currency: 'USD' };
+      case 'future': case 'fut':
+        return { symbol: sym, secType: 'FUT', exchange: 'SMART', currency: 'USD',
+                 lastTradeDateOrContractMonth: process.env.IBKR_FUT_EXPIRY || '' };
+      case 'cfd':
+        return { symbol: sym, secType: 'CFD', exchange: 'SMART', currency: 'USD' };
+      case 'stock': case 'stk': default:
+        return { symbol: sym, secType: 'STK', exchange: 'SMART', currency: 'USD' };
     }
   }
 
-  /** order: { epic, direction, size, guaranteedStop, stopLevel, profitLevel } */
-  async placeOrder(accountId, order) {
-    await this._ensureAuth(accountId);
-    const res = await this._withRetry(accountId, () =>
-      axios.post(`${this._baseUrl}/positions`, order, { headers: this._headers(accountId) })
-    );
-    return { dealId: res.data?.dealReference || res.data?.dealId, status: res.data?.status || 'ok', raw: res.data };
-  }
+  async placeOrder(strategyId, order) {
+    if (!this._ib) throw new Error('IBKR: @stoqey/ib not installed');
+    if (!this._connected) throw new Error('IBKR: not connected to IB Gateway');
 
-  async cancelOrder(accountId, dealId) {
-    await this._ensureAuth(accountId);
-    await this._withRetry(accountId, () =>
-      axios.delete(`${this._baseUrl}/positions/${dealId}`, { headers: this._headers(accountId) })
-    );
-  }
+    const { OrderAction, OrderType } = this._IBEnums;
+    const orderId  = this._nextOrderId++;
+    const contract = this._resolveContract(order.symbol, order.assetClass);
+    const t0 = Date.now();
 
-  async getPositions(accountId) {
-    await this._ensureAuth(accountId);
-    const res = await this._withRetry(accountId, () =>
-      axios.get(`${this._baseUrl}/positions`, { headers: this._headers(accountId) })
-    );
-    return (res.data.positions || []).map(p => ({
-      dealId:    p.position.dealId,
-      epic:      p.market?.epic,
-      direction: p.position.direction,
-      size:      p.position.size,
-      openLevel: p.position.openLevel,
-      sl:        p.position.stopLevel,
-      tp:        p.position.limitLevel,
-      pnl:       p.position.pnl,
-      raw:       p,
-    }));
-  }
-
-  async getBalance(accountId) {
-    await this._ensureAuth(accountId);
-    const res = await this._withRetry(accountId, () =>
-      axios.get(`${this._baseUrl}/accounts`, { headers: this._headers(accountId) })
-    );
-    const bal = res.data.accounts[0]?.balance;
-    return bal?.balance ?? bal?.available ?? bal;
-  }
-
-  /** Returns an unsubscribe function. Uses Capital.com REST polling (no WS yet). */
-  streamPrices(epic, cb, intervalMs = 2000) {
-    // Capital.com doesn't expose a public WS for prices in the basic API.
-    // Poll the market price endpoint every intervalMs.
-    // Replace with WS streaming when Capital.com adds WS support to the account.
-    let active = true;
-    const accountId = Object.keys(this._sessions)[0]; // use first account for market data
-
-    const poll = async () => {
-      if (!active) return;
-      try {
-        await this._ensureAuth(accountId);
-        const res = await axios.get(`${this._baseUrl}/markets/${epic}`, { headers: this._headers(accountId) });
-        const snap = res.data?.snapshot;
-        if (snap) cb({ epic, bid: snap.bid, ask: snap.offer, ts: Date.now() });
-      } catch {}
-      if (active) setTimeout(poll, intervalMs);
+    const action = order.side === 'BUY' ? OrderAction.BUY : OrderAction.SELL;
+    const ibOrder = {
+      orderId,
+      action,
+      totalQuantity: order.size,
+      orderType: order.orderType === 'LMT' ? OrderType.LMT
+               : order.orderType === 'STP' ? OrderType.STP
+               : OrderType.MKT,
+      lmtPrice: order.limitPrice  || undefined,
+      auxPrice: order.stopPrice   || undefined,
+      tif:      order.tif         || 'GTC',
+      account:  this._account     || undefined,
+      transmit: !(order.stopLevel || order.profitLevel), // false if bracket children follow
     };
-    poll();
-    return () => { active = false; };
+
+    // Bracket order: parent + SL child + TP child
+    const children = [];
+    const oppAction = order.side === 'BUY' ? OrderAction.SELL : OrderAction.BUY;
+    if (order.stopLevel) {
+      const slId = this._nextOrderId++;
+      children.push({ orderId: slId, action: oppAction, totalQuantity: order.size,
+                      orderType: OrderType.STP, auxPrice: order.stopLevel,
+                      tif: 'GTC', account: this._account || undefined,
+                      parentId: orderId, transmit: !order.profitLevel });
+    }
+    if (order.profitLevel) {
+      const tpId = this._nextOrderId++;
+      children.push({ orderId: tpId, action: oppAction, totalQuantity: order.size,
+                      orderType: OrderType.LMT, lmtPrice: order.profitLevel,
+                      tif: 'GTC', account: this._account || undefined,
+                      parentId: orderId, transmit: true });
+    }
+
+    this.emit('broker_event', {
+      type: 'order_submitted', adapter: 'ibkr', orderId, strategyId,
+      correlationId: order.correlationId, symbol: order.symbol,
+      side: order.side, size: order.size, ts: new Date().toISOString(),
+    });
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this._pendingOrders.delete(orderId);
+        reject(new Error(`IBKR order ${orderId} timed out after 30s`));
+      }, 30000);
+
+      this._pendingOrders.set(orderId, {
+        resolve: (r) => { clearTimeout(timeout); resolve(r); },
+        reject:  (e) => { clearTimeout(timeout); reject(e); },
+        strategyId, correlationId: order.correlationId, t0,
+      });
+
+      this._ib.placeOrder(orderId, contract, ibOrder);
+      for (const child of children) this._ib.placeOrder(child.orderId, contract, child);
+    });
+  }
+
+  async cancelOrder(strategyId, dealId) {
+    if (!this._connected) throw new Error('IBKR: not connected');
+    const orderId = parseInt(dealId, 10);
+    this._ib.cancelOrder(orderId);
+    this.emit('broker_event', {
+      type: 'order_cancelled', adapter: 'ibkr', orderId, strategyId, ts: new Date().toISOString(),
+    });
+  }
+
+  async modifyOrder(strategyId, dealId, updates) {
+    await this.cancelOrder(strategyId, dealId);
+    return this.placeOrder(strategyId, updates);
+  }
+
+  async getPositions(strategyId) {
+    return [...this._positions.values()];
+  }
+
+  async getBalance() {
+    return this._accountCache.balance;
+  }
+
+  streamPrices(symbol, assetClass, callback) {
+    if (!this._ib || !this._connected) return () => {};
+    const tickerId = this._nextTickerId++;
+    const contract = this._resolveContract(symbol, assetClass);
+    this._priceStreams.set(tickerId, { symbol, assetClass, callback, bid: null, ask: null, last: null });
+    this._ib.reqMktData(tickerId, contract, '', false, false, []);
+    return () => {
+      try { this._ib.cancelMktData(tickerId); } catch {}
+      this._priceStreams.delete(tickerId);
+    };
+  }
+
+  streamOrders(callback) {
+    const handler = (ev) => {
+      if (['order_status', 'fill_received', 'rejected_order', 'order_submitted'].includes(ev.type))
+        callback(ev);
+    };
+    this.on('broker_event', handler);
+    return () => this.off('broker_event', handler);
+  }
+
+  async reconnect() {
+    this._reconnects++;
+    try { this._ib?.disconnect(); } catch {}
+    await new Promise(r => setTimeout(r, 1500));
+    this._initIB();
+  }
+
+  async healthCheck() {
+    return {
+      ...this.health(),
+      host:        this._host,
+      port:        this._port,
+      clientId:    this._clientId,
+      account:     this._account,
+      openOrders:  this._pendingOrders.size,
+      positions:   this._positions.size,
+      priceFeeds:  this._priceStreams.size,
+      balance:     this._accountCache.balance,
+      balanceAgeS: this._accountCache.ts
+                   ? Math.round((Date.now() - this._accountCache.ts) / 1000)
+                   : null,
+    };
   }
 }
 
-// ── Paper Broker Adapter ────────────────────────────────────────────────────
-// Simulates order execution in memory — no real money, no API calls.
-// Useful for testing signal logic end-to-end.
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Paper Broker Adapter  (in-process simulation — no external dependencies)
+// ─────────────────────────────────────────────────────────────────────────────
 class PaperBrokerAdapter extends BrokerAdapter {
   constructor() {
     super('paper');
-    this._positions = {};   // { [accountId]: Position[] }
-    this._balances  = {};   // { [accountId]: number }
+    this._connected = true;
+    this._positions = new Map();
+    this._orders    = new Map();
     this._nextId    = 1;
-    this._priceFeeds = {}; // { epic: { bid, ask } }
+    this._balance   = parseFloat(process.env.PAPER_BALANCE || '100000');
+    this._prices    = new Map();
   }
 
-  _getPositions(accountId) {
-    if (!this._positions[accountId]) this._positions[accountId] = [];
-    return this._positions[accountId];
-  }
-
-  setBalance(accountId, amount) { this._balances[accountId] = amount; }
-  setPrice(epic, bid, ask)      { this._priceFeeds[epic] = { bid, ask }; }
-
-  async placeOrder(accountId, order) {
-    const dealId = `PAPER-${this._nextId++}`;
-    const price  = this._priceFeeds[order.epic];
-    const openLevel = price
-      ? (order.direction === 'BUY' ? price.ask : price.bid)
-      : 0;
+  async placeOrder(strategyId, order) {
+    const dealId = `PAPER-${String(this._nextId++).padStart(6, '0')}`;
+    const price  = this._prices.get(order.symbol)
+                || (order.side === 'BUY'
+                    ? (order.stopLevel  ? order.stopLevel  * 1.02 : 1000)
+                    : (order.stopLevel  ? order.stopLevel  * 0.98 : 1000));
     const pos = {
-      dealId,
-      epic:      order.epic,
-      direction: order.direction,
-      size:      order.size,
-      openLevel,
-      sl:        order.stopLevel  || null,
-      tp:        order.profitLevel || null,
-      pnl:       0,
-      raw:       order,
+      dealId, symbol: order.symbol, side: order.side, size: order.size,
+      avgPrice: price, strategyId, correlationId: order.correlationId,
+      stopLevel: order.stopLevel, profitLevel: order.profitLevel,
     };
-    this._getPositions(accountId).push(pos);
-    console.log(`[Paper] ${accountId} → OPEN ${order.direction} ${order.size}x ${order.epic} @ ${openLevel} (${dealId})`);
-    return { dealId, status: 'ok' };
+    this._orders.set(dealId, pos);
+    this._positions.set(`${strategyId}:${order.symbol}`, pos);
+    this.emit('broker_event', {
+      type: 'fill_received', adapter: 'paper', dealId, strategyId,
+      correlationId: order.correlationId, symbol: order.symbol,
+      side: order.side, size: order.size, avgFillPrice: price, ts: new Date().toISOString(),
+    });
+    return { dealId, status: 'filled', filled: order.size, avgFillPrice: price };
   }
 
-  async cancelOrder(accountId, dealId) {
-    const arr = this._getPositions(accountId);
-    const idx = arr.findIndex(p => p.dealId === dealId);
-    if (idx === -1) throw new Error(`Paper: dealId not found: ${dealId}`);
-    const [pos] = arr.splice(idx, 1);
-    console.log(`[Paper] ${accountId} → CLOSE ${pos.dealId}`);
+  async cancelOrder(strategyId, dealId) {
+    const pos = this._orders.get(dealId);
+    if (pos) this._positions.delete(`${pos.strategyId}:${pos.symbol}`);
+    this._orders.delete(dealId);
   }
 
-  async getPositions(accountId) {
-    return [...this._getPositions(accountId)];
+  async modifyOrder(strategyId, dealId, updates) {
+    const pos = this._orders.get(dealId);
+    if (!pos) throw new Error(`Paper: order ${dealId} not found`);
+    Object.assign(pos, updates);
+    return { dealId, status: 'modified' };
   }
 
-  async getBalance(accountId) {
-    return this._balances[accountId] ?? 10000; // default paper balance
+  async getPositions(strategyId) {
+    const all = [...this._positions.values()];
+    return strategyId ? all.filter(p => p.strategyId === strategyId) : all;
   }
 
-  streamPrices(epic, cb, intervalMs = 1000) {
-    let active = true;
-    let base = this._priceFeeds[epic]?.bid || 2000;
-    const tick = () => {
-      if (!active) return;
-      const spread = 0.30;
-      base = base + (Math.random() - 0.5) * 0.5;
-      const bid = parseFloat(base.toFixed(2));
-      const ask = parseFloat((base + spread).toFixed(2));
-      this._priceFeeds[epic] = { bid, ask };
-      cb({ epic, bid, ask, ts: Date.now() });
-      setTimeout(tick, intervalMs);
+  async getBalance() { return this._balance; }
+
+  streamPrices(symbol, assetClass, callback) {
+    let price = this._prices.get(symbol) || 1000;
+    const iv = setInterval(() => {
+      price += (Math.random() - 0.5) * price * 0.0003;
+      price = Math.max(0.01, price);
+      this._prices.set(symbol, price);
+      callback({ symbol, bid: price * 0.9998, ask: price * 1.0002, last: price, ts: Date.now() });
+    }, 1000);
+    return () => clearInterval(iv);
+  }
+
+  streamOrders(callback) {
+    const h = ev => callback(ev);
+    this.on('broker_event', h);
+    return () => this.off('broker_event', h);
+  }
+
+  async reconnect() { this._connected = true; }
+
+  async healthCheck() {
+    return {
+      ...this.health(),
+      balance:    this._balance,
+      openOrders: this._orders.size,
+      positions:  this._positions.size,
+      note:       'paper simulation — no real orders',
     };
-    tick();
-    return () => { active = false; };
   }
 }
 
-// ── OANDA Stub ──────────────────────────────────────────────────────────────
-// Scaffold only — fill in when OANDA credentials are available.
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stubs (implement REST clients here when ready)
+// ─────────────────────────────────────────────────────────────────────────────
 class OandaAdapter extends BrokerAdapter {
-  constructor() {
-    super('oanda');
-    this._baseUrl    = process.env.OANDA_BASE_URL || 'https://api-fxtrade.oanda.com/v3';
-    this._token      = process.env.OANDA_TOKEN;
-    this._accountIds = {};  // map strategyName → oanda accountId
-  }
-
-  _headers() {
-    return { Authorization: `Bearer ${this._token}`, 'Content-Type': 'application/json' };
-  }
-
-  async placeOrder(accountId, order) {
-    // TODO: map HELIX order format → OANDA v3 order format
-    throw new Error('OandaAdapter.placeOrder: not yet implemented');
-  }
-  async cancelOrder(accountId, dealId) { throw new Error('OandaAdapter.cancelOrder: not yet implemented'); }
-  async getPositions(accountId)        { throw new Error('OandaAdapter.getPositions: not yet implemented'); }
-  async getBalance(accountId)          { throw new Error('OandaAdapter.getBalance: not yet implemented'); }
-  streamPrices(epic, cb) { throw new Error('OandaAdapter.streamPrices: not yet implemented'); }
+  constructor() { super('oanda'); }
+  async placeOrder()   { throw new Error('OandaAdapter: not yet implemented'); }
+  async cancelOrder()  { throw new Error('OandaAdapter: not implemented'); }
+  async modifyOrder()  { throw new Error('OandaAdapter: not implemented'); }
+  async getPositions() { return []; }
+  async getBalance()   { return 0; }
+  streamPrices()       { return () => {}; }
+  streamOrders()       { return () => {}; }
+  async reconnect()    {}
+  async healthCheck()  { return { ...this.health(), note: 'stub — not yet implemented' }; }
 }
 
-// ── Alpaca Stub ─────────────────────────────────────────────────────────────
 class AlpacaAdapter extends BrokerAdapter {
-  constructor() {
-    super('alpaca');
-    this._baseUrl = process.env.ALPACA_BASE_URL || 'https://paper-api.alpaca.markets';
-    this._keyId   = process.env.ALPACA_KEY_ID;
-    this._secret  = process.env.ALPACA_SECRET;
-  }
-
-  _headers() {
-    return { 'APCA-API-KEY-ID': this._keyId, 'APCA-API-SECRET-KEY': this._secret };
-  }
-
-  async placeOrder(accountId, order) {
-    // TODO: map HELIX order → Alpaca order
-    throw new Error('AlpacaAdapter.placeOrder: not yet implemented');
-  }
-  async cancelOrder(accountId, dealId) { throw new Error('AlpacaAdapter.cancelOrder: not yet implemented'); }
-  async getPositions(accountId)        { throw new Error('AlpacaAdapter.getPositions: not yet implemented'); }
-  async getBalance(accountId)          { throw new Error('AlpacaAdapter.getBalance: not yet implemented'); }
-  streamPrices(epic, cb) { throw new Error('AlpacaAdapter.streamPrices: not yet implemented'); }
+  constructor() { super('alpaca'); }
+  async placeOrder()   { throw new Error('AlpacaAdapter: not yet implemented'); }
+  async cancelOrder()  { throw new Error('AlpacaAdapter: not implemented'); }
+  async modifyOrder()  { throw new Error('AlpacaAdapter: not implemented'); }
+  async getPositions() { return []; }
+  async getBalance()   { return 0; }
+  streamPrices()       { return () => {}; }
+  streamOrders()       { return () => {}; }
+  async reconnect()    {}
+  async healthCheck()  { return { ...this.health(), note: 'stub — not yet implemented' }; }
 }
 
-// ── Factory ─────────────────────────────────────────────────────────────────
-/**
- * createBroker(sessions)
- *
- * sessions: the KONTEN object from server.js
- *   { mittel: { apiKey, email, password, cst, token }, ... }
- *
- * Reads BROKER_ADAPTER env var to select adapter:
- *   'capitalcom' (default), 'paper', 'oanda', 'alpaca'
- */
-function createBroker(sessions) {
-  const adapter = (process.env.BROKER_ADAPTER || 'capitalcom').toLowerCase();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Factory
+// ─────────────────────────────────────────────────────────────────────────────
+function createBroker() {
+  const adapter = (process.env.BROKER_ADAPTER || 'ibkr').toLowerCase();
   switch (adapter) {
-    case 'paper':    return new PaperBrokerAdapter();
-    case 'oanda':    return new OandaAdapter();
-    case 'alpaca':   return new AlpacaAdapter();
-    case 'capitalcom':
-    default:         return new CapitalComAdapter(sessions, process.env.BASE_URL);
+    case 'paper':  return new PaperBrokerAdapter();
+    case 'oanda':  return new OandaAdapter();
+    case 'alpaca': return new AlpacaAdapter();
+    case 'ibkr':
+    default:       return new IBKRAdapter();
   }
 }
 
 module.exports = {
   createBroker,
   BrokerAdapter,
-  CapitalComAdapter,
+  IBKRAdapter,
   PaperBrokerAdapter,
   OandaAdapter,
   AlpacaAdapter,
