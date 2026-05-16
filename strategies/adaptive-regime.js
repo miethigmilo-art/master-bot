@@ -1,6 +1,6 @@
 'use strict';
 /**
- * Adaptive Regime Strategy — "adaptive"
+ * Adaptive Regime Strategy — "spinosaurus"
  * Detects market regime from price action and applies the appropriate sub-strategy:
  *   BULL     → Momentum: buy pullbacks to EMA20
  *   BEAR     → Momentum: sell rallies to EMA20
@@ -12,7 +12,7 @@ const { ema, atr, rsi, bollinger }  = require('./indicators');
 
 class AdaptiveRegimeStrategy extends BaseStrategy {
   constructor(settings, marketData, opts) {
-    super('adaptive', settings, marketData, { ...opts, cooldownMs: 3 * 3600_000 });
+    super('spinosaurus', settings, marketData, { ...opts, cooldownMs: 3 * 3600_000 });
     this._defaultTimeframe = 'H1';
   }
 

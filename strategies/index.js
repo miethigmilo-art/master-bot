@@ -20,7 +20,7 @@ const AdaptiveRegimeStrategy     = require('./adaptive-regime');
 const SteadyScalperStrategy      = require('./steady-scalper');
 
 // Default symbols each strategy watches — override via STRATEGY_SYMBOLS env var (JSON)
-// Format: { "mittel": ["XAUUSD","EURUSD","SPX500"], "steady": ["XAUUSD"] }
+// Format: { "stegosaurus": ["XAUUSD","EURUSD","SPX500"], "ankylosaurus": ["XAUUSD"] }
 const DEFAULT_SYMBOLS = {
   mittel:      ['XAUUSD', 'EURUSD', 'SPX500', 'US100', 'BTCUSD'],
   aggressiv:   ['XAUUSD', 'EURUSD', 'SPX500', 'US100', 'BTCUSD', 'ETHUSD'],

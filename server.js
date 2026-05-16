@@ -283,7 +283,7 @@ async function tg(msg) {
 
 // ── Regime (Smart) ────────────────────────────────────
 function berechneRegime() {
-  const trades = tradeHistory['smart'] || [];
+  const trades = tradeHistory['raptor'] || [];
   let konsek = 0;
   for (let i = trades.length - 1; i >= 0; i--) { if (trades[i].pnl < 0) konsek++; else break; }
   SMART.konsekVerluste = konsek;
@@ -1118,10 +1118,10 @@ async function handleWebhook(req, res, name) {
 }
 
 // ── Webhook Routen ─────────────────────────────────────────────────
-['mittel','aggressiv','smart','konservativ','optimiert','test','adaptive','steady'].forEach(n => {
+['stegosaurus','trex','raptor','brachiosaurus','pterodactyl','triceratops','spinosaurus','ankylosaurus'].forEach(n => {
   app.post(`/webhook/${n}`, (req, res) => handleWebhook(req, res, n));
 });
-app.post('/webhook/goldglobe', (req, res) => handleWebhook(req, res, 'smart'));
+app.post('/webhook/goldglobe', (req, res) => handleWebhook(req, res, 'raptor'));
 // ── PnL-Webhook ───────────────────────────────────────────────────────────────
 // TradingView sendet diesen Webhook wenn ein Trade geschlossen wird.
 // Payload: { strategie, pnl, side, datum? }

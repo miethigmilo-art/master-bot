@@ -103,9 +103,9 @@ async function runRecoveryTests(deps) {
         ? broker.getInterceptedOrders().length
         : -1;
 
-      const result = await broker.placeOrder('test', {
+      const result = await broker.placeOrder('triceratops', {
         symbol: 'XAUUSD', side: 'BUY', size: 1, orderType: 'MKT',
-        stopLevel: 1750, profitLevel: 1900, strategyId: 'test',
+        stopLevel: 1750, profitLevel: 1900, strategyId: 'triceratops',
       });
 
       if (!result || result.status !== 'SANDBOX') {

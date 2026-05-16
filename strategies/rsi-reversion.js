@@ -1,6 +1,6 @@
 'use strict';
 /**
- * RSI Mean Reversion Strategy — "optimiert"
+ * RSI Mean Reversion Strategy — "pterodactyl"
  * Timeframe: M15  |  RSI(14) oversold/overbought + Bollinger Band confirmation
  * BUY:  RSI < 30 (oversold) + price at/below lower Bollinger Band
  * SELL: RSI > 70 (overbought) + price at/above upper Bollinger Band
@@ -11,7 +11,7 @@ const { rsi, atr, bollinger, ema } = require('./indicators');
 
 class RSIReversionStrategy extends BaseStrategy {
   constructor(settings, marketData, opts) {
-    super('optimiert', settings, marketData, { ...opts, cooldownMs: 2 * 3600_000 });
+    super('pterodactyl', settings, marketData, { ...opts, cooldownMs: 2 * 3600_000 });
     this._defaultTimeframe = 'M15';
   }
 

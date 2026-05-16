@@ -1,6 +1,6 @@
 'use strict';
 /**
- * ML Confidence Strategy — "smart"
+ * ML Confidence Strategy — "raptor"
  * Timeframe: H1  |  ML service + Regime filter + EMA trend
  * Only signals when: ML confidence > threshold AND regime = AKTIV AND trend aligned
  * This strategy defers heavily to the ML service for entry decisions.
@@ -11,7 +11,7 @@ const axios = require('axios');
 
 class MLConfidenceStrategy extends BaseStrategy {
   constructor(settings, marketData, opts) {
-    super('smart', settings, marketData, { ...opts, cooldownMs: 6 * 3600_000 });
+    super('raptor', settings, marketData, { ...opts, cooldownMs: 6 * 3600_000 });
     this._defaultTimeframe = 'H1';
     this._mlUrl = process.env.ML_SERVICE_URL || null;
   }
@@ -44,7 +44,7 @@ class MLConfidenceStrategy extends BaseStrategy {
       const now  = new Date();
       const slDist = atrVal * 1.2;
       const ml = await axios.post(`${this._mlUrl}/predict`, {
-        strategie:    'smart',
+        strategie:    'raptor',
         side,
         hour:         now.getHours(),
         weekday:      now.getDay(),

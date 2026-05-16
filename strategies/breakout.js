@@ -1,6 +1,6 @@
 'use strict';
 /**
- * Breakout Strategy — "aggressiv"
+ * Breakout Strategy — "trex"
  * Timeframe: H1  |  20-bar Donchian Channel
  * BUY:  price breaks above 20-bar high with ATR expansion
  * SELL: price breaks below 20-bar low with ATR expansion
@@ -11,7 +11,7 @@ const { atr, avg }     = require('./indicators');
 
 class BreakoutStrategy extends BaseStrategy {
   constructor(settings, marketData, opts) {
-    super('aggressiv', settings, marketData, { ...opts, cooldownMs: 3 * 3600_000 });
+    super('trex', settings, marketData, { ...opts, cooldownMs: 3 * 3600_000 });
     this._defaultTimeframe = 'H1';
   }
 

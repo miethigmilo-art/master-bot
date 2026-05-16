@@ -1,10 +1,10 @@
 {
-  "mittel":      { "enabled": true,  "riskPct": 1.5, "leverage": 5, "maxDrawdownPct": 20, "tagsStopPct": 5.0, "minRRR": 2.0, "startEquity": 1000 },
-  "aggressiv":   { "enabled": true,  "riskPct": 2.0, "leverage": 5, "maxDrawdownPct": 30, "tagsStopPct": 5.0, "minRRR": 2.0, "startEquity": 1000 },
-  "smart":       { "enabled": true,  "riskPct": 1.2, "leverage": 5, "maxDrawdownPct": 20, "tagsStopPct": 5.0, "minRRR": 2.5, "startEquity": 1000, "regimeFilter": true },
-  "konservativ": { "enabled": true,  "riskPct": 1.0, "leverage": 5, "maxDrawdownPct": 50, "tagsStopPct": 5.0, "minRRR": 2.0, "startEquity": 1000 },
-  "optimiert":   { "enabled": true,  "riskPct": 1.0, "leverage": 5, "maxDrawdownPct": 50, "tagsStopPct": 5.0, "minRRR": 2.0, "startEquity": 1000 },
-  "test":        { "enabled": true,  "riskPct": 1.0, "leverage": 5, "maxDrawdownPct": 50, "tagsStopPct": 5.0, "minRRR": 2.0, "startEquity": 1000 },
-  "adaptive":    { "enabled": true,  "riskPct": 1.0, "leverage": 5, "maxDrawdownPct": 30, "tagsStopPct": 5.0, "minRRR": 2.0, "startEquity": 1000 },
-  "steady":      { "enabled": true,  "riskPct": 0.2, "leverage": 2, "maxDrawdownPct": 3,  "tagsStopPct": 0.05,"minRRR": 2.0, "startEquity": 1000, "tagsVerlustPct": 0.1 }
+  "stegosaurus":      { "enabled": true,  "riskPct": 1.5, "leverage": 5, "maxDrawdownPct": 20, "tagsStopPct": 5.0, "minRRR": 2.0, "startEquity": 1000 },
+  "trex":   { "enabled": true,  "riskPct": 2.0, "leverage": 5, "maxDrawdownPct": 30, "tagsStopPct": 5.0, "minRRR": 2.0, "startEquity": 1000 },
+  "raptor":       { "enabled": true,  "riskPct": 1.2, "leverage": 5, "maxDrawdownPct": 20, "tagsStopPct": 5.0, "minRRR": 2.5, "startEquity": 1000, "regimeFilter": true },
+  "brachiosaurus": { "enabled": true,  "riskPct": 1.0, "leverage": 5, "maxDrawdownPct": 50, "tagsStopPct": 5.0, "minRRR": 2.0, "startEquity": 1000 },
+  "pterodactyl":   { "enabled": true,  "riskPct": 1.0, "leverage": 5, "maxDrawdownPct": 50, "tagsStopPct": 5.0, "minRRR": 2.0, "startEquity": 1000 },
+  "triceratops":        { "enabled": true,  "riskPct": 1.0, "leverage": 5, "maxDrawdownPct": 50, "tagsStopPct": 5.0, "minRRR": 2.0, "startEquity": 1000 },
+  "spinosaurus":    { "enabled": true,  "riskPct": 1.0, "leverage": 5, "maxDrawdownPct": 30, "tagsStopPct": 5.0, "minRRR": 2.0, "startEquity": 1000 },
+  "ankylosaurus":      { "enabled": true,  "riskPct": 0.2, "leverage": 2, "maxDrawdownPct": 3,  "tagsStopPct": 0.05,"minRRR": 2.0, "startEquity": 1000, "tagsVerlustPct": 0.1 }
 }

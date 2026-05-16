@@ -1,6 +1,6 @@
 'use strict';
 /**
- * Steady Scalper Strategy — "steady"
+ * Steady Scalper Strategy — "ankylosaurus"
  * Ultra-conservative. Timeframe: M5
  * Looks for micro-pullbacks within a well-established short-term trend.
  * Very tight SL (0.5× ATR), very small risk (0.2% per trade).
@@ -16,7 +16,7 @@ const { ema, rsi, atr }     = require('./indicators');
 
 class SteadyScalperStrategy extends BaseStrategy {
   constructor(settings, marketData, opts) {
-    super('steady', settings, marketData, { ...opts, cooldownMs: 30 * 60_000 });
+    super('ankylosaurus', settings, marketData, { ...opts, cooldownMs: 30 * 60_000 });
     this._defaultTimeframe = 'M5'; // 30min cooldown
     this._prevPrice = null;
     this._prevEma8  = null;

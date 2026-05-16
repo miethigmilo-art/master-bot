@@ -1,6 +1,6 @@
 'use strict';
 /**
- * Trend Following Strategy — "konservativ"
+ * Trend Following Strategy — "brachiosaurus"
  * Timeframe: H4  |  EMA 50 trend direction + RSI pullback entry
  * BUY:  Price above EMA50 (uptrend) + RSI pulls back to 40-50 zone
  * SELL: Price below EMA50 (downtrend) + RSI rallies to 50-60 zone
@@ -11,7 +11,7 @@ const { ema, rsi, atr } = require('./indicators');
 
 class TrendFollowStrategy extends BaseStrategy {
   constructor(settings, marketData, opts) {
-    super('konservativ', settings, marketData, { ...opts, cooldownMs: 12 * 3600_000 });
+    super('brachiosaurus', settings, marketData, { ...opts, cooldownMs: 12 * 3600_000 });
     this._defaultTimeframe = 'H4';
   }
 

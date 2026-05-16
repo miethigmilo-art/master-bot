@@ -1,6 +1,6 @@
 'use strict';
 /**
- * EMA Crossover Strategy — "mittel"
+ * EMA Crossover Strategy — "stegosaurus"
  * Timeframe: H1  |  EMA 20 / EMA 50
  * BUY:  EMA20 crosses above EMA50, price above both, ATR confirms volatility
  * SELL: EMA20 crosses below EMA50, price below both
@@ -11,7 +11,7 @@ const { ema, atr }     = require('./indicators');
 
 class EMACrossoverStrategy extends BaseStrategy {
   constructor(settings, marketData, opts) {
-    super('mittel', settings, marketData, { ...opts, cooldownMs: 4 * 3600_000 });
+    super('stegosaurus', settings, marketData, { ...opts, cooldownMs: 4 * 3600_000 });
     this._defaultTimeframe = 'H1';
     this._prevEma20 = null;
     this._prevEma50 = null;

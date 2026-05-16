@@ -1,6 +1,6 @@
 'use strict';
 /**
- * Session Trader Strategy — "test"
+ * Session Trader Strategy — "triceratops"
  * Trades the first momentum burst at London Open (08:00 UTC) and NY Open (13:30 UTC).
  * Logic: First 15min candle direction at session open = bias for next 2h
  * BUY:  Opening candle bullish (close > open) + price above session open
@@ -15,7 +15,7 @@ const SESSION_WINDOW  = 2;   // trade only within 2h of session open
 
 class SessionTraderStrategy extends BaseStrategy {
   constructor(settings, marketData, opts) {
-    super('test', settings, marketData, { ...opts, cooldownMs: 5 * 3600_000 });
+    super('triceratops', settings, marketData, { ...opts, cooldownMs: 5 * 3600_000 });
     this._defaultTimeframe = 'M15';
     this._lastSessionHour = -1;
   }
