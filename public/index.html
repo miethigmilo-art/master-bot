@@ -285,7 +285,21 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font-sans
 .pf-stat-val{font-family:var(--font-mono);font-weight:600}
 </style>
 </head>
-<body><div id="root"></div>
+<body>
+<div id="root"></div>
+<div id="errdiv" style="display:none;position:fixed;top:0;left:0;width:100%;padding:20px;background:#1a0000;color:#ff6b6b;font:14px monospace;z-index:9999;white-space:pre-wrap;word-break:break-all"></div>
+<script>
+window.onerror=function(m,s,l,c,e){
+  var d=document.getElementById("errdiv");
+  d.style.display="block";
+  d.textContent="ERROR: "+m+"\nLine: "+l+"\n"+(e&&e.stack?e.stack.slice(0,800):"no stack");
+};
+window.onunhandledrejection=function(e){
+  var d=document.getElementById("errdiv");
+  d.style.display="block";
+  d.textContent="Unhandled Promise: "+(e.reason||"unknown");
+};
+</script>
 <script>
 const {
   useState,
