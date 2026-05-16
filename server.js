@@ -1770,3 +1770,156 @@ app.delete('/api/broker/sandbox-orders', (req, res) => {
   res.json({ ok: true });
 });
 
+async function startServer() {
+  if (db.available) {
+    try {
+      await db.init();
+      addLog('info', '🐘 PostgreSQL verbunden — lade Daten aus DB...');
+      for (const name of STRATEGY_IDS) {
+        try {          const dbTrades = await db.getTrades(name, 500);
+          if (dbTrades.length > 0) {
+            tradeHistory[name] = dbTrades;
+            addLog('info', `[${name}] ${dbTrades.length} Trades aus DB geladen`);
+          }
+        } catch {}
+        try {
+          const dbEquity = await db.getEquityHistory(name, 500);
+          if (dbEquity.length > 0) equityHistory[name] = dbEquity;
+        } catch {}
+        try {
+          const dbPerf = await db.getPerformance(name);
+          if (dbPerf) performance[name] = { ...performance[name], ...dbPerf };
+        } catch {}
+        try {
+          const dbStunden = await db.getStunden(name);
+          if (Object.keys(dbStunden).length > 0) stundenStats[name] = dbStunden;
+        } catch {}
+        try {
+          const dbTuning = await db.getTuning(name);
+          if (dbTuning.length > 0) tuningHistory[name] = dbTuning;
+        } catch {}
+      }
+      try {
+        const dbMM = await db.getMarketMode();
+        if (dbMM) marketMode = dbMM;
+      } catch {}
+      addLog('info', '🐘 DB-Sync abgeschlossen');
+    } catch (err) {
+      addLog('warn', `⚠️ DB-Init fehlgeschlagen (JSON-Fallback): ${err.message}`);
+    }
+  } else {
+    addLog('info', '📁 Kein DATABASE_URL — JSON-Fallback aktiv');
+  }
+
+  const riskEngine = new RiskEngine(() => ({
+    settings: SETTINGS,
+    performance,
+    marketMode,
+    marketModes: MARKET_MODES,
+    scorePauses,
+    tagesStart,
+  }));
+  addLog('info', '⚙️ Risk Engine initialisiert (Event Bus aktiv)');
+
+  // ── Phase 10: Snapshot + Recovery ────────────────────────────────────────
+  const SNAPSHOT_PATH = path.join(DATA_DIR, 'snapshot.json');
+  const DEDUP_PATH    = path.join(DATA_DIR, 'dedup.json');
+
+  // Start periodic state snapshots (every 60s)
+  startSnapshotLoop({
+    snapshotPath: SNAPSHOT_PATH,
+    intervalMs:   60_000,
+    addLog,
+    getState: () => ({
+      performance:   JSON.parse(JSON.stringify(performance)),
+      tradeHistory:  JSON.parse(JSON.stringify(tradeHistory)),
+      equityHistory: JSON.parse(JSON.stringify(equityHistory)),
+      marketMode:    JSON.parse(JSON.stringify(marketMode)),
+      tagesStart:    JSON.parse(JSON.stringify(tagesStart)),
+    }),
+  });
+
+  // Initialise event deduplicator (used for idempotent webhook handling)
+  const _dedup = deduplicator({ dedupPath: DEDUP_PATH, addLog });
+
+  // Reconcile open positions at broker vs. local state
+  // Run non-blocking — don't delay server start
+  reconcileOnStartup({
+    broker,
+    strategies:      STRATEGY_IDS,
+    snapshotPath:    SNAPSHOT_PATH,
+    addLog,
+    autoCloseOrphans: process.env.AUTO_CLOSE_ORPHANS === 'true',
+  }).catch(err => addLog('warn', `[Recovery] Startup-Reconciliation Fehler: ${err.message}`));
+
+  server.listen(PORT, () => {
+    addLog('info', `🚀 Master Bot laeuft auf Port ${PORT} (DB: ${db.available ? 'PostgreSQL' : 'JSON'})`);
+    console.log(`Master Bot auf Port ${PORT}`);
+  });
+
+  // ── Phase 7: Auto-Retraining Loop ─────────────────────────────────────────
+  const autoRetrainer = new AutoRetrain({
+    featuresPath: FEATURES_PATH,
+    retrainPath:  path.join(DATA_DIR, 'retrains.jsonl'),
+    mlUrl:        ML_URL,
+    addLog,
+    bus,
+    EVENT_TYPES,
+  });
+  _autoRetrainer = autoRetrainer;
+  if (ML_URL) {
+    autoRetrainer.start();
+    addLog('info', '[AutoRetrain] Retraining-Loop aktiv');
+  } else {
+    addLog('info', '[AutoRetrain] Inaktiv (kein ML_SERVICE_URL gesetzt)');
+  }
+
+  // ── Market Mode alle 30 Min aktualisieren (+ sofort nach 5s)
+  setTimeout(analysiereMarktmodus, 5 * 1000);
+  setInterval(analysiereMarktmodus, 30 * 60 * 1000);
+  setInterval(syncPortfolioCapital, 5 * 60 * 1000);
+  setTimeout(syncPortfolioCapital, 5000);
+
+  // Start autonomous strategy signal generators (all bots, all assets)
+  startStrategies(broker, SETTINGS, { port: PORT, log: addLog });
+  addLog('info', '🤖 Autonomous strategies started — all bots generating signals internally');
+
+  // ML-Status alle 5 Min aktualisieren
+  setInterval(aktualisiereMlStatus, 5 * 60 * 1000);
+
+  // Meta-Learning: Modell-Drift alle 60 Min pruefen (+ sofort nach 30s)
+  setTimeout(pruefeModelDrift, 30 * 1000);
+  setInterval(pruefeModelDrift, META_CFG.CHECK_INTERVAL * 60 * 1000);
+
+  // Strategie-Score alle 4h pruefen (+ sofort nach 10s)
+  setTimeout(pruefeAlleScores, 10 * 1000);
+  setInterval(pruefeAlleScores, 4 * 60 * 60 * 1000);
+
+  // Multi-Asset Scanner (HELIX Phase 3) — scans multiple instruments simultaneously
+  // Set SIGNAL_SCAN_EPICS=GOLD,EURUSD,US500 to override instrument list
+  // Falls back to SIGNAL_GEN_EPIC (single instrument) for backwards compat
+  if (process.env.SIGNAL_GEN_ENABLED === 'true') {
+    sigGen = new MultiAssetScanner({
+      baseUrl:      BASE_URL,
+      getHeaders:   (_name) => Promise.resolve({}),
+      ensureAuth:   ensureAuth,
+      addLog:       addLog,
+      port:         PORT,
+      rrr:          process.env.SIGNAL_GEN_RRR    || '2.0',
+      atrSlFactor:  process.env.SIGNAL_GEN_ATR_SL || '1.5',
+      intervalMs:   (parseInt(process.env.SIGNAL_GEN_INTERVAL || '60', 10)) * 1000,
+      secret:       process.env.WEBHOOK_SECRET    || '',
+      // Explicit instrument list (optional — falls back to env SIGNAL_SCAN_EPICS)
+      instruments:  null,
+    });
+    sigGen.start();
+    addLog('info', '[Scanner] Multi-Asset Scanner aktiv');
+  } else {
+    addLog('info', '[Scanner] Signal Scanner inaktiv (ENV: SIGNAL_GEN_ENABLED=false oder nicht gesetzt)');
+  }
+}
+
+startServer().catch(err => {
+  console.error('Startup-Fehler:', err);
+  process.exit(1);
+});
