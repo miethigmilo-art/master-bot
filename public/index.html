@@ -6,8 +6,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="/react.min.js"></script>
-<script src="/react-dom.min.js"></script>
+<script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
 <style>
 :root{--bg:#0a0d12;--bg-elev:#0f1419;--bg-elev2:#141a22;--panel:#0f1419;--line:rgba(255,255,255,0.06);--line-strong:rgba(255,255,255,0.12);--text:#e6e9ef;--text-dim:#8b94a3;--text-faint:#5a6373;--accent:#22d3ee;--pos:#22c55e;--neg:#ef4444;--warn:#f59e0b;--grid:rgba(255,255,255,0.04);--sidebar-w:228px;--radius:10px;--radius-sm:6px;--pad:20px;--font-mono:'JetBrains Mono','IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--font-sans:'Inter',ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;--font-display:'Inter',ui-sans-serif,system-ui,sans-serif;--shadow-card:0 1px 0 rgba(255,255,255,0.02) inset,0 1px 2px rgba(0,0,0,0.4);--card-bg:var(--bg-elev)}
 :root[data-mode="light"]{--bg:#f7f8fa;--bg-elev:#ffffff;--bg-elev2:#fbfbfd;--panel:#ffffff;--line:rgba(10,14,22,0.06);--line-strong:rgba(10,14,22,0.12);--text:#0f172a;--text-dim:#64748b;--text-faint:#94a3b8;--grid:rgba(10,14,22,0.04);--shadow-card:0 1px 2px rgba(15,23,42,0.04),0 0 0 1px rgba(15,23,42,0.04);--card-bg:#ffffff}
@@ -285,8 +285,25 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font-sans
 .pf-stat-val{font-family:var(--font-mono);font-weight:600}
 </style>
 </head>
-<body>
-<div id="root"></div>
+<body><div id="root"></div>
+<script>
+// ── Auth Token Injection ──────────────────────────────────────────────────────
+// Read token from URL (?token=...) and auto-add to all /api/ fetch calls
+(function() {
+  const params = new URLSearchParams(window.location.search);
+  const _token = params.get('token') || sessionStorage.getItem('dashboard_token') || '';
+  if (_token) sessionStorage.setItem('dashboard_token', _token);
+  
+  const _origFetch = window.fetch.bind(window);
+  window.fetch = function(url, opts) {
+    if (typeof url === 'string' && url.startsWith('/api')) {
+      const sep = url.includes('?') ? '&' : '?';
+      url = url + sep + 'token=' + encodeURIComponent(_token);
+    }
+    return _origFetch(url, opts);
+  };
+})();
+</script>
 <script>
 const {
   useState,
