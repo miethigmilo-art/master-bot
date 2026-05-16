@@ -1516,4 +1516,920 @@ function SystemHealthScreen({ wsStatus }) {
       <div className="card">
         <div className="card-head">
           <span className="card-title">Dedup Cache</span>
-          <s
+          <span className="faint mono">{Object.keys(dedup).length} entries</span>
+        </div>
+        <div style={{maxHeight:200,overflowY:'auto'}}>
+          {Object.entries(dedup).slice(0,20).map(([k,v]) => (
+            <div key={k} className="dd-row">
+              <span className="mono" style={{fontSize:11}}>{k.slice(0,20)+'…'}</span>
+              <span>{fmtTime(v)}</span>
+            </div>
+          ))}
+          {Object.keys(dedup).length===0 && <div style={{color:'var(--text-faint)',fontSize:12}}>Cache empty</div>}
+        </div>
+      </div>
+    </div>
+  </>);
+}
+
+// ─── Replay Screen (HELIX Phase 9) ──────────────────────────────────────────────────────
+function ReplayScreen() {
+  const [replays, setReplays] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState(null);
+  const [timeline, setTimeline] = useState(null);
+  const [simResult, setSimResult] = useState(null);
+  const [simLoading, setSimLoading] = useState(false);
+
+  useEffect(() => {
+    setLoading(true);
+    fetch('/api/replay?limit=200')
+      .then(r => r.json())
+      .then(d => { setReplays(d.replays || []); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, []);
+
+  const loadTimeline = async cid => {
+    setSelected(cid); setTimeline(null);
+    const r = await fetch(`/api/replay/${cid}`);
+    if (r.ok) setTimeline(await r.json());
+  };
+
+  const simulateReplay = async () => {
+    if (!timeline) return;
+    setSimLoading(true); setSimResult(null);
+    const sig = { strategie: timeline.strategie, epic: timeline.epic, side: timeline.side,
+      sl: timeline.stages.find(s => s.type === 'SIGNAL_RECEIVED')?.payload?.sl || 0,
+      tp: timeline.stages.find(s => s.type === 'SIGNAL_RECEIVED')?.payload?.tp || 0 };
+    const r = await fetch('/api/replay/simulate', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(sig) });
+    if (r.ok) setSimResult(await r.json());
+    setSimLoading(false);
+  };
+
+  const outcomeClass = o => o === 'WIN' ? 'win' : o === 'LOSS' ? 'loss' : 'unknown';
+  const fmtMs = ms => ms < 1000 ? `${ms}ms` : ms < 60000 ? `${(ms/1000).toFixed(1)}s` : `${(ms/60000).toFixed(1)}m`;
+
+  return (<>
+    <div className="grid-2" style={{ gap: 'var(--pad)', alignItems: 'start' }}>
+      <div className="card" style={{ minHeight: 400 }}>
+        <div className="card-head">
+          <span className="card-title">Trade Replays</span>
+          <span className="faint mono">{replays.length} correlationIds</span>
+        </div>
+        {loading ? <div style={{color:'var(--text-faint)',fontSize:12}}>Loading…</div> : (
+          replays.length === 0 ? (
+            <div className="rp-empty">No replays yet — trades will appear here after first signal</div>
+          ) : (
+            <div className="rp-list">
+              {replays.map(rp => (
+                <div key={rp.correlationId} className="rp-row" onClick={() => loadTimeline(rp.correlationId)}
+                  style={{ background: selected === rp.correlationId ? 'var(--bg-elev2)' : undefined,
+                           borderColor: selected === rp.correlationId ? 'var(--accent)' : undefined }}>
+                  <div className={`rp-outcome ${outcomeClass(rp.outcome)}`}/>
+                  <span className="mono" style={{fontSize:11}}>{rp.correlationId.slice(0,16)}…</span>
+                  <span style={{fontWeight:600,color:rp.epic?'var(--accent)":'var(--text-faint)'}}>{rp.epic||'?'}</span>
+                  <span className={rp.side==='BUY'?'tag long':'tag short'}>{rp.side||'?'}</span>
+                  <span className="faint">{rp.strategie}</span>
+                  <span className={rp.pnl>0?'pos':rp.pnl<0?'neg':''}}>{rp.pnl!=null?(rp.pnl>0?'+':'')+rp.pnl.toFixed(2):'\u2014'}</span>
+                </div>
+              ))}
+            </div>
+          )
+        )}
+      </div>
+      <div className="card" style={{ minHeight: 400 }}>
+        <div className="card-head">
+          <span className="card-title">{selected ? 'Timeline' : 'Select a replay'}</span>
+          {timeline && (
+            <button className="tb-btn" onClick={simulateReplay} disabled={simLoading}>
+              {simLoading ? 'Simulating…' : '▶ Simulate now'}
+            </button>
+          )}
+        </div>
+        {!timeline && !selected && <div className="rp-empty">← Click a trade to see its full timeline</div>}
+        {selected && !timeline && <div style={{color:'var(--text-faint)',fontSize:12}}>Loading…</div>}
+        {timeline && (<>
+          <div className="row" style={{gap:12,flexWrap:'wrap',padding:'4px 0 10px',borderBottom:'1px solid var(--line)',fontSize:12}}>
+            <span><b>{timeline.epic}</b></span>
+            <span className={timeline.side==='BUY'?'tag long':'tag short'}>{timeline.side}</span>
+            <span>{timeline.strategie}</span>
+            <span className={timeline.outcome==='WIN'?'pos':'neg'}>{timeline.outcome}</span>
+            {timeline.pnl != null && <span className={timeline.pnl>0?'pos':'neg'}>{timeline.pnl>0?'+':''}{timeline.pnl.toFixed(2)}</span>}
+            <span className="faint">{fmtMs(timeline.durationMs)} total</span>
+          </div>
+          <div className="rp-timeline" style={{marginTop:12}}>
+            {timeline.stages.map((s, i) => (
+              <div key={i} className="rp-stage">
+                <span className="rp-stage-type">{s.type}</span>
+                <span className="rp-delta">+{fmtMs(s.deltaMs)}</span>
+                <span className="faint" style={{fontSize:11}}>{s.source}</span>
+                <span className="faint mono" style={{fontSize:10}}>{JSON.stringify(s.payload).slice(0,60)}</span>
+              </div>
+            ))}
+          </div>
+          {simResult && (
+            <div style={{marginTop:12,padding:10,background:'var(--bg-elev2)',borderRadius:'var(--radius-sm)',fontSize:12}}>
+              <b>Simulation result:</b>
+              <pre style={{margin:'6px 0 0',fontSize:11,overflow:'auto',maxHeight:120}}>{JSON.stringify(simResult.result,null,2)}</pre>
+            </div>
+          )}
+        </>)}
+      </div>
+    </div>
+  </>);
+}
+
+// ─── Scanner Screen (HELIX Phase 3) ───────────────────────────────────────
+function ScannerScreen() {
+  const [status, setStatus] = useState(null);
+  const [form, setForm] = useState({ epic: '', strategie: 'mittel', rrr: '2.0', resolution: 'MINUTE' });
+  const [msg, setMsg] = useState(null);
+  const strategies = ['mittel','aggressiv','smart','konservativ','optimiert','test','adaptive','steady'];
+
+  const load = () => {
+    fetch('/api/signal-generator').then(r => r.json()).then(setStatus).catch(() => {});
+  };
+  useEffect(() => { load(); const id = setInterval(load, 5000); return () => clearInterval(id); }, []);
+
+  const doStart = () => fetch('/api/signal-generator/start', {method:'POST'}).then(load);
+  const doStop  = () => fetch('/api/signal-generator/stop',  {method:'POST'}).then(load);
+  const doAdd   = async () => {
+    if (!form.epic) { setMsg('Epic required'); return; }
+    const r = await fetch('/api/scanner/instruments', { method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify(form) });
+    const d = await r.json();
+    setMsg(r.ok ? `✓ ${form.epic} added` : d.error || 'Error');
+    if (r.ok) { load(); setForm(f => ({...f, epic: ''})); }
+  };
+  const doRemove = async epic => {
+    await fetch(`/api/scanner/instruments/${epic}`, {method:'DELETE'});
+    setMsg(`Removed ${epic}`); load();
+  };
+
+  const gens = status?.generators || [];
+  const running = status?.running;
+
+  return (<>
+    <div className="row" style={{justifyContent:'space-between',alignItems:'center',flexWrap:'wrap',gap:10}}>
+      <div>
+        <span className={`sc-status ${running?'on':'off'}`}>{running?'● RUNNING':'● STOPPED'}</span>
+        {!status?.enabled && <span className="faint" style={{marginLeft:12,fontSize:11}}>Set SIGNAL_GEN_ENABLED=true in Railway to activate</span>}
+      </div>
+      <div className="row" style={{gap:8}}>
+        <button className="tb-btn" onClick={doStart} disabled={running}>Start</button>
+        <button className="tb-btn" onClick={doStop}  disabled={!running}>Stop</button>
+      </div>
+    </div>
+    <div className="card">
+      <div className="card-head"><span className="card-title">Active Instruments</span><span className="faint mono">{gens.length} scanning</span></div>
+      {gens.length === 0 ? (
+        <div style={{color:'var(--text-faint)',fontSize:12}}>No instruments active. Set SIGNAL_SCAN_EPICS=GOLD,EURUSD,US500 or add below.</div>
+      ) : (
+        <div className="sc-grid">
+          {gens.map(g => (
+            <div key={g.epic} className={`sc-card ${g.running?'running':''}`}>
+              <div className="row" style={{justifyContent:'space-between'}}>
+                <span className="sc-epic">{g.epic}</span>
+                <span className={`sc-status ${g.running?'on':'off'}`}>{g.running?'ON':'OFF'}</span>
+              </div>
+              <div className="sc-meta">Strategy: {g.strategie || '—'}</div>
+              <div className="sc-meta">RRR: {g.rrr} | {g.intervalMs/1000}s | {g.resolution}</div>
+              <div className="sc-meta">Signals: {g.signals} | Checks: {g.checks}</div>
+              {g.lastSignal && <div className="sc-meta" style={{color:g.lastSignal.side==='BUY'?'var(--pos)':'var(--neg)'}}>Last: {g.lastSignal.side} — {g.lastSignal.grund?.slice(0,40)}</div>}
+              <button className="tb-btn" style={{marginTop:4,fontSize:11}} onClick={() => doRemove(g.epic)}>Remove</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+    <div className="card">
+      <div className="card-head"><span className="card-title">Add Instrument</span></div>
+      <div className="sc-form">
+        <input placeholder="Epic (e.g. EURUSD)" value={form.epic} onChange={e=>setForm(f=>({...f,epic:e.target.value.toUpperCase()}))}/>
+        <select value={form.strategie} onChange={e=>setForm(f=>({...f,strategie:e.target.value}))}>
+          {strategies.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <input placeholder="RRR" style={{width:70}} value={form.rrr} onChange={e=>setForm(f=>({...f,rrr:e.target.value}))}/>
+        <select value={form.resolution} onChange={e=>setForm(f=>({...f,resolution:e.target.value}))}>
+          {['MINUTE','MINUTE_5','MINUTE_15','MINUTE_30','HOUR'].map(r => <option key={r} value={r}>{r}</option>)}
+        </select>
+        <button className="tb-btn" onClick={doAdd} style={{background:'var(--accent)',color:'#fff',border:'none'}}>+ Add</button>
+      </div>
+      {msg && <div style={{fontSize:11,marginTop:6,color:msg.startsWith('✓')?'var(--pos)':'var(--neg)'}}>{msg}</div>}
+    </div>
+  </>);
+}
+
+// ─── Portfolio Risk Screen (HELIX Phase 6) ─────────────────────────────────
+function PortfolioRiskScreen() {
+  const [data, setData] = useState(null);
+  const [corr, setCorr] = useState(null);
+  const [retrain, setRetrain] = useState(null);
+  const [retraining, setRetraining] = useState(false);
+  const D = window.BOT_DATA;
+
+  const load = () => {
+    Promise.all([
+      fetch('/api/portfolio/risk').then(r=>r.json()).catch(()=>null),
+      fetch('/api/correlation/exposure').then(r=>r.json()).catch(()=>null),
+      fetch('/api/ml/retrain-status').then(r=>r.json()).catch(()=>null),
+    ]).then(([p, c, rt]) => { setData(p); setCorr(c); setRetrain(rt); });
+  };
+  useEffect(() => { load(); const id = setInterval(load, 8000); return () => clearInterval(id); }, []);
+
+  const triggerRetrain = async () => {
+    setRetraining(true);
+    await fetch('/api/ml/retrain', { method:'POST', headers:{'Content-Type':'application/json'}, body:'{}' });
+    setRetraining(false); load();
+  };
+
+  const totalEquity = D ? D.metrics.totalEquity : 0;
+  const openTrades  = data?.openTrades || [];
+  const byEpic      = data?.byEpic || {};
+  const totalAtRisk = data?.totalAtRisk || 0;
+  const dailyPnl    = data?.dailyPnl || 0;
+  const riskPct     = totalEquity > 0 ? (totalAtRisk / totalEquity) * 100 : 0;
+  const dailyLossPct = totalEquity > 0 ? (dailyPnl / totalEquity) * 100 : 0;
+  const maxRiskPct  = data?.config?.MAX_RISK_PCT || 8;
+  const maxOpen     = data?.config?.MAX_OPEN || 6;
+
+  return (<>
+    <div className="kpi-grid" style={{gridTemplateColumns:'repeat(4,1fr)'}}>
+      <div className="kpi">
+        <div className="kpi-label">Open Positions</div>
+        <div className="kpi-value" style={{color:openTrades.length>0?'var(--text)':'var(--text-dim)'}}>{openTrades.length}/{maxOpen}</div>
+        <div className="kpi-foot faint">Portfolio cap</div>
+      </div>
+      <div className="kpi">
+        <div className="kpi-label">Capital at Risk</div>
+        <div className="kpi-value" style={{color:riskPct>maxRiskPct*0.75?'var(--neg)':riskPct>maxRiskPct*0.5?'var(--warn)':'var(--text)'}}>{riskPct.toFixed(1)}%</div>
+        <div className="kpi-foot faint">of total equity / {maxRiskPct}% cap</div>
+      </div>
+      <div className="kpi">
+        <div className="kpi-label">Daily P&L</div>
+        <div className="kpi-value" style={{color:dailyPnl>0?'var(--pos)':dailyPnl<0?'var(--neg)':'var(--text)'}}>{dailyPnl>=0?'+':''}{dailyPnl.toFixed(2)}</div>
+        <div className="kpi-foot faint">{dailyLossPct.toFixed(1)}% of equity</div>
+      </div>
+      <div className="kpi">
+        <div className="kpi-label">Total Equity</div>
+        <div className="kpi-value">{totalEquity > 0 ? totalEquity.toFixed(0) : '—'}</div>
+        <div className="kpi-foot faint">all strategies combined</div>
+      </div>
+    </div>
+
+    <div className="grid-2">
+      <div className="card">
+        <div className="card-head"><span className="card-title">Portfolio Risk Bar</span><span className="faint">{riskPct.toFixed(1)}% / {maxRiskPct}%</span></div>
+        <div className="pf-risk-bar" style={{height:14}}>
+          <div className="pf-risk-fill" style={{
+            width: `${Math.min(100, (riskPct/maxRiskPct)*100)}%`,
+            background: riskPct > maxRiskPct*0.85 ? 'var(--neg)' : riskPct > maxRiskPct*0.6 ? 'var(--warn)' : 'var(--pos)'
+          }}/>
+        </div>
+        <div className="col" style={{gap:0,marginTop:12}}>
+          {openTrades.length === 0 ? <div style={{color:'var(--text-faint)',fontSize:12}}>No open positions tracked</div> : (
+            openTrades.map((t, i) => (
+              <div key={i} className="pf-stat">
+                <span><b>{t.name}</b> <span className="faint">→ {t.epic}</span></span>
+                <span className="pf-stat-val" style={{color:'var(--warn)'}}>-{t.riskCapital?.toFixed(2) || '—'}</span>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+      <div className="card">
+        <div className="card-head"><span className="card-title">Exposure by Instrument</span></div>
+        {Object.keys(byEpic).length === 0 ? (
+          <div style={{color:'var(--text-faint)',fontSize:12}}>No active positions</div>
+        ) : (
+          <div className="pf-heat">
+            {Object.entries(byEpic).map(([epic, strats]) => {
+              const exposurePct = maxOpen > 0 ? (strats.length / maxOpen) * 100 : 0;
+              return (
+                <div key={epic} className="pf-heat-card">
+                  <div className="pf-heat-fill" style={{width:`${exposurePct}%`}}/>
+                  <div className="pf-heat-epic">{epic}</div>
+                  <div className="pf-heat-strats">{strats.join(', ')}</div>
+                  <div className="pf-risk-bar"><div className="pf-risk-fill" style={{width:`${exposurePct}%`,background:'var(--accent)'}}/></div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+
+    <div className="grid-2">
+      <div className="card">
+        <div className="card-head"><span className="card-title">Correlation Exposure</span></div>
+        {!corr?.exposure || Object.keys(corr.exposure).length === 0 ? (
+          <div style={{color:'var(--text-faint)',fontSize:12}}>No correlated positions open</div>
+        ) : (
+          <div className="col" style={{gap:0}}>
+            {Object.entries(corr.exposure).map(([epic, info]) => (
+              <div key={epic} className="pf-stat">
+                <span>{epic}</span>
+                <div className="row" style={{gap:8}}>
+                  {info.buys > 0  && <span className="tag long">{info.buys}L</span>}
+                  {info.sells > 0 && <span className="tag short">{info.sells}S</span>}
+                  <span className="faint">{Object.keys(info.strategies).join(', ')}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+      <div className="card">
+        <div className="card-head">
+          <span className="card-title">ML Auto-Retrain</span>
+          <button className="tb-btn" onClick={triggerRetrain} disabled={retraining || !retrain?.enabled}>{retraining?'Training…':'Trigger Now'}</button>
+        </div>
+        {!retrain?.enabled ? (
+          <div style={{color:'var(--text-faint)',fontSize:12}}>ML service not connected (set ML_SERVICE_URL)</div>
+        ) : (
+          <div className="col" style={{gap:0}}>
+            <div className="pf-stat"><span>Phase</span><span className="pf-stat-val">{retrain.phase||'idle'}</span></div>
+            <div className="pf-stat"><span>Labeled samples</span><span className="pf-stat-val">{retrain.currentSampleCount||0}</span></div>
+            <div className="pf-stat"><span>New since last</span><span className="pf-stat-val">{retrain.newSinceLastRetrain||0} / {retrain.threshold||50}</span></div>
+            <div className="pf-stat"><span>Last retrain</span><span className="pf-stat-val">{retrain.lastRetrain?new Date(retrain.lastRetrain).toLocaleTimeString('en-GB'):'Never'}</span></div>
+            {retrain.error && <div style={{color:'var(--neg)',fontSize:11,marginTop:4}}>Error: {retrain.error}</div>}
+          </div>
+        )}
+      </div>
+    </div>
+  </>);
+}
+
+// ─── Logs Screen ──────────────────────────────────────────────────────────
+function LogsScreen({ events }) {
+  const typeColor = type => {
+    if(['ORDER_PLACED','RISK_APPROVED','PNL_RECORDED'].includes(type)) return 'type-pos';
+    if(['ORDER_FAILED','ERROR','RISK_REJECTED'].includes(type)) return 'type-error';
+    if(['SIGNAL_RECEIVED','SIGNAL_ENRICHED'].includes(type)) return 'type-acc';
+    return '';
+  };
+  return (<>
+    <div className="card" style={{padding:0}}>
+      <div className="card-head" style={{padding:'12px 16px'}}>
+        <span className="card-title">Live Event Stream</span>
+        <span className="faint mono">{events.length} events</span>
+      </div>
+      <div className="log-list">
+        {events.slice(0,100).map((e,i) => (
+          <div key={i} className={`log-entry ${typeColor(e.type)}`}>
+            <span style={{color:'var(--text-faint)'}}>{e.timestamp?new Date(e.timestamp).toLocaleTimeString('en-GB'):'—'}</span>
+            <span style={{fontWeight:600}}>{e.type||'—'}</span>
+            <span style={{color:'var(--text-dim)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>
+              {e.source} {e.payload?JSON.stringify(e.payload).slice(0,80):''}
+            </span>
+          </div>
+        ))}
+        {events.length===0 && <div style={{padding:'40px 16px',textAlign:'center',color:'var(--text-faint)',fontSize:12}}>Waiting for events… Connect to /ws</div>}
+      </div>
+    </div>
+  </>);
+}
+
+// ─── Drilldowns ───────────────────────────────────────────────────────────
+function TradeDrilldown({ trade, onClose }) {
+  if (!trade) return null;
+  return (<>
+    <div className={`drilldown-scrim ${trade?'open':''}`} onClick={onClose}/>
+    <aside className={`drilldown ${trade?'open':''}`}>
+      <div className="drilldown-head">
+        <div>
+          <div className="row" style={{gap:10,alignItems:'center'}}>
+            <h2 style={{margin:0,fontSize:18,fontWeight:600}}>{trade.pair||'Trade'}</h2>
+            <span className={`tag ${(trade.side||'').toLowerCase()==='buy'||trade.side==='LONG'?'long':'short'}`}>{trade.side}</span>
+          </div>
+          <div className="dim mono" style={{fontSize:11,marginTop:4}}>Strategy: {trade.strategyName||trade.strategy||'—'}</div>
+        </div>
+        <button className="dd-close" onClick={onClose}><Icon name="x" size={14}/></button>
+      </div>
+      <div className="drilldown-body">
+        <div className="kpi" style={{padding:16}}>
+          <div className="kpi-label"><span>Realized P&L</span></div>
+          <div className="kpi-value" style={{fontSize:32,color:trade.pnl>=0?'var(--pos)':'var(--neg)'}}>{fmtUSD(trade.pnl,{signed:true})}</div>
+        </div>
+        <div className="card" style={{gap:2}}>
+          <span className="card-title" style={{marginBottom:6}}>Execution Details</span>
+          <div className="dd-row"><span>Entry Price</span><span>{trade.entryPx||trade.entryPrice||trade.entry||'—'}</span></div>
+          <div className="dd-row"><span>Exit Price</span><span>{trade.exitPx||trade.exitPrice||trade.exit||'—'}</span></div>
+          <div className="dd-row"><span>Side</span><span>{trade.side||'—'}</span></div>
+          <div className="dd-row"><span>Date</span><span>{fmtDateTime(trade.closeTime||trade.timestamp||Date.now())}</span></div>
+          <div className="dd-row"><span>Correlation ID</span><span style={{fontSize:10}}>{(trade.correlationId||'—').slice(0,18)}</span></div>
+        </div>
+      </div>
+    </aside>
+  </>);
+}
+
+function BotDrilldown({ bot, onClose }) {
+  const D = window.BOT_DATA;
+  if (!bot) return null;
+  const botTrades = D.trades.filter(t => t.strategy===bot.id||t.strategyName===bot.codename).slice(0,8);
+  return (<>
+    <div className={`drilldown-scrim ${bot?'open':''}`} onClick={onClose}/>
+    <aside className={`drilldown ${bot?'open':''}`} style={{width:520}}>
+      <div className="drilldown-head">
+        <div>
+          <div className="row" style={{gap:10,alignItems:'center'}}>
+            <span style={{width:10,height:10,borderRadius:2,background:bot.color}}/>
+            <h2 style={{margin:0,fontSize:20,fontWeight:700}}>{bot.codename}</h2>
+            <BotStatusDot status={bot.status}/>
+          </div>
+          <div className="dim mono" style={{fontSize:11,marginTop:4}}>{bot.variant}</div>
+        </div>
+        <button className="dd-close" onClick={onClose}><Icon name="x" size={14}/></button>
+      </div>
+      <div className="drilldown-body">
+        <div className="kpi" style={{padding:16}}>
+          <div className="kpi-label"><span>P&L</span></div>
+          <div className="kpi-value" style={{fontSize:32,color:bot.pnl>=0?'var(--pos)':'var(--neg)'}}>{fmtUSD(bot.pnl,{signed:true})}</div>
+          <div className="kpi-foot">
+            <span className={`kpi-delta ${bot.pnl>=0?'pos':'neg'}`}><Icon name={bot.pnl>=0?'arrowUp':'arrowDown'}/>{fmtPct(bot.pnlPct,{signed:true})}</span>
+          </div>
+          {bot.spark?.length>1 && <div className="kpi-spark"><Sparkline data={bot.spark} color={bot.pnl>=0?'var(--pos)':'var(--neg)'} width={100} height={28}/></div>}
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'var(--pad)'}}>
+          <MiniMetric label="Win Rate" value={(bot.winRate*100).toFixed(1)+'%'} sub={`${bot.wins} W / ${bot.losses} L`}/>
+          <MiniMetric label="Score" value={bot.score+''} sub={bot.score>=70?'Champion':bot.score>=50?'Active':'Watch'}/>
+          <MiniMetric label="Trades" value={bot.trades+''} sub={bot.mlTrainiert?'ML Enhanced':'Rule Based'}/>
+        </div>
+        <div className="card" style={{gap:2}}>
+          <span className="card-title" style={{marginBottom:6}}>Details</span>
+          <div className="dd-row"><span>Status</span><span style={{color:'var(--accent)'}}>{bot.status.toUpperCase()}</span></div>
+          <div className="dd-row"><span>Score</span><span>{bot.score||0}</span></div>
+          <div className="dd-row"><span>ML Trained</span><span>{bot.mlTrainiert?'Yes':'No'}</span></div>
+          {bot.mlTrainiert && <div className="dd-row"><span>ML Accuracy</span><span>{((bot.mlAccuracy||0)*100).toFixed(1)}%</span></div>}
+          {bot.mlTrainiert && <div className="dd-row"><span>ML Trades</span><span>{bot.mlNTrades||0}</span></div>}
+          {bot.paused && <div className="dd-row"><span>Pause Reason</span><span style={{color:'var(--warn)'}}>{bot.pauseGrund||'—'}</span></div>}
+        </div>
+        {botTrades.length > 0 && (
+          <div className="card" style={{gap:6,padding:0}}>
+            <div style={{padding:'12px 14px 4px'}}><span className="card-title">Recent Trades</span></div>
+            <table className="tbl">
+              <thead><tr><th>Pair</th><th>Side</th><th style={{textAlign:'right'}}>P&L</th></tr></thead>
+              <tbody>{botTrades.map((t,i) => (
+                <tr key={i}>
+                  <td><strong>{t.pair||'XAUUSD'}</strong></td>
+                  <td><span className={`tag ${(t.side||'').toLowerCase()==='buy'||t.side==='LONG'?'long':'short'}`}>{t.side}</span></td>
+                  <td className={`num mono ${t.pnl>=0?'pos':'neg'}`}>{fmtUSD(t.pnl,{signed:true})}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </aside>
+  </>);
+}
+// ─── Tweaks Panel ─────────────────────────────────────────────────────────
+const ACCENT_OPTIONS = ['#6366f1','#22d3ee','#22c55e','#f59e0b','#ec4899','#ffffff'];
+function TweaksPanel({ tweaks, setTweak, wsStatus }) {
+  const [open, setOpen] = useState(false);
+  return (<>
+    <button className="tweaks-toggle" onClick={() => setOpen(o=>!o)}>
+      <Icon name="settings" size={14}/>
+      Theme
+    </button>
+    {open && (
+      <div className="tweaks-panel">
+        <div className="row" style={{justifyContent:'space-between',marginBottom:8}}>
+          <span style={{fontWeight:600,fontSize:13}}>Theme & Layout</span>
+          <button className="dd-close" onClick={()=>setOpen(false)}><Icon name="x" size={12}/></button>
+        </div>
+        <div className="tweak-section">
+          <div className="tweak-section-label">Visual Vibe</div>
+          <div className="tweak-row">
+            <label>Vibe</label>
+            <select value={tweaks.vibe} onChange={e=>setTweak('vibe',e.target.value)}>
+              <option value="fintech">Modern Fintech</option>
+              <option value="terminal">Bloomberg Terminal</option>
+              <option value="cyber">Cyberpunk</option>
+              <option value="mono">Minimal Mono</option>
+            </select>
+          </div>
+          <div className="tweak-row">
+            <label>Mode</label>
+            <div className="seg" style={{height:28}}>
+              {['dark','light'].map(m => <button key={m} className={tweaks.mode===m?'on':''} onClick={()=>setTweak('mode',m)} style={{fontSize:11}}>{m}</button>)}
+            </div>
+          </div>
+          <div className="tweak-row">
+            <label>Accent</label>
+            <div className="accent-dots">
+              {ACCENT_OPTIONS.map(c => (
+                <div key={c} className={`accent-dot ${tweaks.accent===c?'active':''}`}
+                     style={{background:c}} onClick={()=>setTweak('accent',c)}/>
+              ))}
+            </div>
+          </div>
+        </div>
+        <div className="tweak-section">
+          <div className="tweak-section-label">Density</div>
+          <div className="seg" style={{height:28}}>
+            {['compact','regular','comfy'].map(d => <button key={d} className={tweaks.density===d?'on':''} onClick={()=>setTweak('density',d)} style={{fontSize:11}}>{d}</button>)}
+          </div>
+        </div>
+        <div className="tweak-section">
+          <div className="tweak-section-label">WebSocket</div>
+          <div className={`ws-badge ${wsStatus==='connected'?'on':'off'}`}>
+            <div className="ws-dot"/>
+            {wsStatus}
+          </div>
+        </div>
+      </div>
+    )}
+  </>);
+}
+
+// ─── Data Layer ───────────────────────────────────────────────────────────
+const BOT_COLORS = ['#6366f1','#22d3ee','#22c55e','#f59e0b','#ec4899','#a78bfa','#34d399','#fb923c'];
+
+function computeDailyPnl(trades) {
+  const now = Date.now();
+  const days = {};
+  for (let i = 364; i >= 0; i--) {
+    const d = new Date(now - i * 86400000);
+    const key = d.toDateString();
+    days[key] = { t: new Date(d.toDateString()).getTime(), v: 0 };
+  }
+  for (const t of (trades||[])) {
+    const ts = t.closeTime || t.timestamp || t.exit || now;
+    const key = new Date(ts).toDateString();
+    if (days[key]) days[key].v += (t.pnl || 0);
+  }
+  return Object.values(days).sort((a,b) => a.t-b.t);
+}
+
+function computeDrawdown(equity) {
+  if (!equity?.length) return [];
+  let peak = equity[0].v;
+  return equity.map(p => {
+    if (p.v > peak) peak = p.v;
+    return { t: p.t, v: peak > 0 ? -((peak - p.v) / peak) * 100 : 0 };
+  });
+}
+
+function makeEquitySeries(strategyData) {
+  const now = Date.now();
+  const allPoints = [];
+  let fallbackEquity = 0;
+  for (const [name, s] of Object.entries(strategyData || {})) {
+    const hist = s.equityHistory || [];
+    fallbackEquity += s.equity || 0;
+    hist.forEach((v, i, arr) => {
+      const eq = typeof v === 'object' ? (v.equity || v.v || 0) : v;
+      allPoints.push({ t: now - (arr.length - 1 - i) * 3600000, v: eq, name });
+    });
+  }
+  if (allPoints.length === 0) {
+    return [{ t: now - 86400000, v: fallbackEquity }, { t: now, v: fallbackEquity }];
+  }
+  const byHour = {};
+  for (const p of allPoints) {
+    const h = Math.floor(p.t / 3600000) * 3600000;
+    byHour[h] = (byHour[h] || 0) + p.v;
+  }
+  return Object.entries(byHour)
+    .map(([t, v]) => ({ t: parseInt(t), v }))
+    .sort((a, b) => a.t - b.t)
+    .slice(-100);
+}
+
+function normalizeTradeForDisplay(t, bots) {
+  const botMatch = bots.find(b => b.codename === (t.strategie || t.strategy) || b.id === (t.strategie || t.strategy));
+  return {
+    id: t.id || t.correlationId || Math.random(),
+    pair: t.pair || 'XAUUSD',
+    side: t.side === 'BUY' ? 'LONG' : t.side === 'SELL' ? 'SHORT' : (t.side || '—'),
+    strategy: botMatch?.id || t.strategie || t.strategy || '—',
+    strategyName: t.strategie || t.strategy || '—',
+    pnl: parseFloat(t.pnl) || 0,
+    pnlPct: t.pnlPct || 0,
+    entryPx: t.entry || t.entryPrice || '—',
+    exitPx: t.exit || t.exitPrice || '—',
+    closeTime: t.closeTime || t.timestamp || Date.now(),
+    entry: t.entryTime || t.timestamp || Date.now(),
+    correlationId: t.correlationId || '',
+  };
+}
+
+function makeAppData(apiState, allTrades, liveEvents) {
+  const now = Date.now();
+  const stratEntries = Object.entries(apiState?.strategies || {});
+  const bots = stratEntries.map(([name, s], idx) => {
+    const pnl = s.totalPnl || 0;
+    const startEq = s.startEquity || s.equity || 10000;
+    const pnlPct = startEq > 0 ? (pnl / startEq) * 100 : 0;
+    const histRaw = s.equityHistory || [];
+    const spark = histRaw.slice(-14).map((v, i, arr) => ({
+      t: now - (arr.length - 1 - i) * 3600000,
+      v: typeof v === 'object' ? (v.equity || v.v || 0) : (v || 0)
+    }));
+    const status = s.paused ? 'paused' : (s.score || 0) >= 70 ? 'champion' : 'active';
+    return {
+      id: name, rank: idx + 1, codename: name, strategyName: name,
+      variant: s.mlTrainiert ? 'ML-Enhanced' : 'Rule-Based', status,
+      color: BOT_COLORS[idx % BOT_COLORS.length],
+      pnl, pnlPct, winRate: s.winRate || 0,
+      wins: Math.round((s.winRate || 0) * (s.totalTrades || 0)),
+      losses: Math.round((1 - (s.winRate || 0)) * (s.totalTrades || 0)),
+      trades: s.totalTrades || 0, score: s.score || 0, equity: s.equity || 0, spark,
+      paused: s.paused || false, pauseGrund: s.pauseGrund || '',
+      mlTrainiert: s.mlTrainiert || false, mlAccuracy: s.mlAccuracy || 0,
+      mlNTrades: s.mlNTrades || 0, recentTrades: s.recentTrades || [],
+    };
+  });
+  bots.sort((a, b) => b.pnl - a.pnl);
+  bots.forEach((b, i) => b.rank = i + 1);
+  const totalEquity = bots.reduce((s, b) => s + b.equity, 0);
+  const totalPnl = bots.reduce((s, b) => s + b.pnl, 0);
+  const totalTrades = bots.reduce((s, b) => s + b.trades, 0);
+  const avgWinRate = bots.length > 0 ? bots.reduce((s, b) => s + b.winRate, 0) / bots.length : 0;
+  const equitySeries = makeEquitySeries(apiState?.strategies || {});
+  const recentFromState = bots.flatMap(b => (b.recentTrades || []).map(t => normalizeTradeForDisplay({ ...t, strategie: b.codename }, bots)));
+  const normalizedAll = allTrades.map(t => normalizeTradeForDisplay(t, bots));
+  const tradeMap = new Map();
+  for (const t of [...recentFromState, ...normalizedAll]) tradeMap.set(t.id, t);
+  const trades = [...tradeMap.values()].sort((a,b) => (b.closeTime||0) - (a.closeTime||0));
+  const dailyPnl = computeDailyPnl(trades);
+  const drawdown = computeDrawdown(equitySeries);
+  const events = liveEvents.slice(0, 20).map(e => ({
+    type: e.type, text: e.type?.replace(/_/g, ' ') || 'Event',
+    detail: e.payload ? (e.payload.strategie||e.payload.side||JSON.stringify(e.payload).slice(0,50)) : e.source || '',
+    t: e.timestamp || now, payload: e.payload,
+  }));
+  return {
+    now, metrics: { totalEquity, totalPnl, totalTrades, avgWinRate },
+    marketMode: apiState?.marketMode || 'NORMAL',
+    circuits: apiState?.circuits || {}, dedup: apiState?.dedup || {},
+    metricsSnap: apiState?.metricsSnap || {}, settings: apiState?.settings || {},
+    bots, trades, equity: equitySeries, drawdown, dailyPnl, events, openPositions: [],
+  };
+}
+
+// ─── Loading Screen ───────────────────────────────────────────────────────
+function LoadingScreen() {
+  return (
+    <div style={{ height:'100vh', display:'grid', placeItems:'center', background:'var(--bg)' }}>
+      <div className="col" style={{ alignItems:'center', gap:16 }}>
+        <div style={{ width:40, height:40, borderRadius:10, background:'var(--accent)', display:'grid', placeItems:'center', color:'var(--bg)' }}>
+          <Icon name="strategy" size={20}/>
+        </div>
+        <div style={{ fontSize:16, fontWeight:600, color:'var(--text)' }}>Master Bot</div>
+        <div style={{ color:'var(--text-faint)', fontSize:12 }}>Connecting to backend…</div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Clock ────────────────────────────────────────────────────────────────
+function Clock() {
+  const c = useClock();
+  return (
+    <span className="tb-time">
+      {c.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}
+      {' · '}
+      {c.toLocaleTimeString('en-GB')}
+    </span>
+  );
+}
+
+// ─── Sidebar item ─────────────────────────────────────────────────────────
+function SbItem({ item, active, onClick }) {
+  return (
+    <button type="button" className={`sb-item ${active?'active':''}`} onClick={onClick}>
+      <Icon name={item.icon}/>
+      <span>{item.label}</span>
+      {item.badge != null && (
+        <span className="sb-item-badge" style={item.soon?{background:'var(--bg)',color:'var(--text-faint)',border:'1px solid var(--line)'}:{}}>
+          {item.badge > 999 ? '999+' : item.badge}
+        </span>
+      )}
+      {item.soon && !item.badge && (
+        <span style={{marginLeft:'auto',fontSize:9,color:'var(--text-faint)',textTransform:'uppercase',letterSpacing:'.05em'}}>soon</span>
+      )}
+    </button>
+  );
+}
+
+// ─── App ──────────────────────────────────────────────────────────────────
+function App() {
+  const [tweaks, setTweak] = useTweaks({ vibe:'fintech', mode:'dark', density:'regular', accent:'#6366f1' });
+  const [route, setRoute] = useState('overview');
+  const [apiState, setApiState] = useState(null);
+  const [allTrades, setAllTrades] = useState([]);
+  const [liveEvents, setLiveEvents] = useState([]);
+  const [wsStatus, setWsStatus] = useState('connecting');
+  const [selectedTrade, setSelectedTrade] = useState(null);
+  const [selectedBot, setSelectedBot] = useState(null);
+  const wsRef = useRef(null);
+  const delayRef = useRef(1000);
+
+  const fetchState = useCallback(async () => {
+    try {
+      const r = await fetch('/api/state');
+      if (r.ok) setApiState(await r.json());
+    } catch {}
+  }, []);
+
+  const fetchTrades = useCallback(async () => {
+    try {
+      const r = await fetch('/api/trades');
+      if (r.ok) {
+        const d = await r.json();
+        if (Array.isArray(d)) {
+          setAllTrades(d);
+        } else if (d && typeof d === 'object') {
+          const flat = Object.entries(d).flatMap(([strat, ts]) =>
+            (Array.isArray(ts) ? ts : []).map(t => ({ ...t, strategie: t.strategie || strat }))
+          );
+          setAllTrades(flat);
+        }
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    fetchState(); fetchTrades();
+    const id = setInterval(fetchState, 10000);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    let timer;
+    function connect() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      try {
+        const ws = new WebSocket(`${proto}//${location.host}/ws`);
+        wsRef.current = ws;
+        ws.onopen = () => { setWsStatus('connected'); delayRef.current = 1000; fetchState(); };
+        ws.onmessage = e => {
+          try {
+            const ev = JSON.parse(e.data);
+            setLiveEvents(prev => [ev, ...prev].slice(0, 200));
+            if (['PNL_RECORDED','ORDER_PLACED','SCORE_CHANGED','AUTOTUNE_TRIGGERED','RISK_SIZED'].includes(ev.type)) {
+              fetchState();
+              if (ev.type === 'PNL_RECORDED') fetchTrades();
+            }
+          } catch {}
+        };
+        ws.onerror = () => ws.close();
+        ws.onclose = () => {
+          setWsStatus('disconnected');
+          timer = setTimeout(() => { delayRef.current = Math.min(30000, delayRef.current * 2); connect(); }, delayRef.current);
+        };
+      } catch { setWsStatus('error'); }
+    }
+    connect();
+    return () => { clearTimeout(timer); wsRef.current?.close(); };
+  }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.dataset.vibe = tweaks.vibe;
+    root.dataset.mode = tweaks.mode;
+    root.dataset.density = tweaks.density;
+    if (tweaks.vibe !== 'mono') root.style.setProperty('--accent', tweaks.accent);
+    else root.style.removeProperty('--accent');
+  }, [tweaks]);
+
+  useEffect(() => {
+    const fn = e => { if (e.key==='Escape') { setSelectedTrade(null); setSelectedBot(null); } };
+    window.addEventListener('keydown', fn);
+    return () => window.removeEventListener('keydown', fn);
+  }, []);
+
+  const D = useMemo(() => {
+    if (!apiState) return null;
+    const d = makeAppData(apiState, allTrades, liveEvents);
+    window.BOT_DATA = d;
+    return d;
+  }, [apiState, allTrades, liveEvents]);
+
+  if (!D) return <LoadingScreen/>;
+
+  const navWorkspace = [
+    { id:'overview',   label:'Overview',      icon:'dashboard' },
+    { id:'fleet',      label:'Bot Fleet',     icon:'cpu',      badge:D.bots.length },
+    { id:'strategies', label:'Strategies',    icon:'strategy', badge:D.bots.length },
+    { id:'history',    label:'Trade History', icon:'history',  badge:Math.min(999,D.trades.length) },
+  ];
+  const navObserve = [
+    { id:'decisions', label:'Decision Trace', icon:'layers' },
+    { id:'events',    label:'Event Stream',   icon:'activity', badge:Math.min(99,liveEvents.length) },
+    { id:'health',    label:'System Health',  icon:'health' },
+    { id:'replay',    label:'Trade Replay',   icon:'history' },
+  ];
+  const navHelix = [
+    { id:'scanner',   label:'Multi-Asset Scanner', icon:'cpu' },
+    { id:'portfolio', label:'Portfolio Risk',       icon:'strategy' },
+  ];
+  const navMonitor = [
+    { id:'logs',     label:'Live Logs', icon:'logs', badge:Math.min(99,liveEvents.length) },
+    { id:'settings', label:'Settings',  icon:'settings', soon:true },
+  ];
+
+  const titles = {
+    overview:'Overview', fleet:'Bot Fleet', strategies:'Strategies', history:'Trade History',
+    decisions:'Decision Trace', events:'Event Stream', health:'System Health',
+    replay:'Trade Replay', scanner:'Multi-Asset Scanner', portfolio:'Portfolio Risk',
+    logs:'Live Logs', settings:'Settings',
+  };
+  const subs = {
+    overview:   `${D.bots.filter(b=>b.status!=='paused').length} active strategies · Market: ${D.marketMode}`,
+    fleet:      `${D.bots.length} strategies · ${D.bots.filter(b=>b.status!=='paused').length} active`,
+    strategies: `${D.bots.length} strategies · compare and drill in`,
+    history:    `${D.trades.length.toLocaleString()} closed trades`,
+    decisions:  'Agent votes → ML → Risk Engine → Execution → Broker ACK',
+    events:     `Live system bus · correlationId threading · ${liveEvents.length} events captured`,
+    health:     'Services · resources · circuit breakers · event bus',
+    replay:     'Full correlationId timeline · simulate historical signals · audit every trade',
+    scanner:    'Multi-instrument signal scanner · add/remove epics at runtime',
+    portfolio:  'Portfolio-level risk · correlation exposure · ML auto-retrain status',
+    logs:       `${liveEvents.length} events captured`,
+    settings:   'Configuration',
+  };
+
+  const activeBot = D.bots.filter(b=>b.status!=='paused').length;
+  return (
+    <div className="app">
+      <aside className="sidebar">
+        <div className="sb-brand">
+          <div className="sb-logo">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 17l5-5 4 4 8-8"/><path d="M14 8h6v6"/>
+            </svg>
+          </div>
+          <div className="col" style={{gap:0}}>
+            <span className="sb-brand-name">Master Bot</span>
+            <span className="sb-brand-sub">Trading Engine</span>
+          </div>
+        </div>
+        <div className="sb-section-label">Workspace</div>
+        <nav className="sb-nav">{navWorkspace.map(n => <SbItem key={n.id} item={n} active={route===n.id} onClick={()=>setRoute(n.id)}/>)}</nav>
+        <div className="sb-section-label">Observe</div>
+        <nav className="sb-nav">{navObserve.map(n => <SbItem key={n.id} item={n} active={route===n.id} onClick={()=>setRoute(n.id)}/>)}</nav>
+        <div className="sb-section-label">HELIX</div>
+        <nav className="sb-nav">{navHelix.map(n => <SbItem key={n.id} item={n} active={route===n.id} onClick={()=>setRoute(n.id)}/>)}</nav>
+        <div className="sb-section-label">Monitor</div>
+        <nav className="sb-nav">{navMonitor.map(n => <SbItem key={n.id} item={n} active={route===n.id} onClick={()=>setRoute(n.id)}/>)}</nav>
+        <div className="sb-foot">
+          <div className="sb-bot-status">
+            <span className={`sb-bot-dot ${wsStatus==='connected'?'':'warn'}`}/>
+            <span className="sb-bot-status-text">{wsStatus==='connected'?'Connected':'Reconnecting'}</span>
+          </div>
+          <div className="sb-bot-meta">
+            {activeBot} active · {D.bots.length} total strategies<br/>
+            Market: {D.marketMode||'NORMAL'}
+          </div>
+        </div>
+      </aside>
+      <main className="main">
+        <div className="main-inner">
+          <div className="topbar">
+            <div>
+              <h1>{titles[route]||route}</h1>
+              <div className="topbar-sub">{subs[route]||''}</div>
+            </div>
+            <div className="topbar-right">
+              <Clock/>
+              <div className={`ws-badge ${wsStatus==='connected'?'on':'off'}`}><div className="ws-dot"/>{wsStatus}</div>
+              <button className="tb-btn" onClick={()=>setTweak('mode',tweaks.mode==='dark'?'light':'dark')}>
+                <Icon name={tweaks.mode==='dark'?'sun':'moon'}/>{tweaks.mode==='dark'?'Light':'Dark'}
+              </button>
+              <button className="tb-btn" onClick={fetchState}><Icon name="refresh"/>Refresh</button>
+            </div>
+          </div>
+          {route==='overview'   && <OverviewScreen onSelectTrade={setSelectedTrade} onSelectBot={setSelectedBot}/>}
+          {route==='fleet'      && <FleetScreen onSelectBot={setSelectedBot}/>}
+          {route==='strategies' && <StrategiesScreen onSelectTrade={setSelectedTrade}/>}
+          {route==='history'    && <HistoryScreen onSelectTrade={setSelectedTrade}/>}
+          {route==='decisions'  && <DecisionTraceScreen/>}
+          {route==='events'     && <EventStreamScreen liveEvents={liveEvents}/>}
+          {route==='health'     && <SystemHealthScreen wsStatus={wsStatus}/>}
+          {route==='replay'     && <ReplayScreen/>}
+          {route==='scanner'    && <ScannerScreen/>}
+          {route==='portfolio'  && <PortfolioRiskScreen/>}
+          {route==='logs'       && <LogsScreen events={liveEvents}/>}
+          {route==='settings'   && (
+            <div className="card" style={{minHeight:320,display:'grid',placeItems:'center',textAlign:'center'}}>
+              <div><Icon name="settings" size={28}/><div style={{fontSize:18,fontWeight:600,marginTop:8}}>Settings</div><div className="faint" style={{marginTop:4}}>Coming soon</div></div>
+            </div>
+          )}
+        </div>
+      </main>
+      <TradeDrilldown trade={selectedTrade} onClose={()=>setSelectedTrade(null)}/>
+      <BotDrilldown bot={selectedBot} onClose={()=>setSelectedBot(null)}/>
+      <TweaksPanel tweaks={tweaks} setTweak={setTweak} wsStatus={wsStatus}/>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App/>);
+</script>
+</body>
+</html>
