@@ -35,6 +35,7 @@ const { adaptiveSizingFactor } = require('./sizing');
 const { correlationFilter, trackPosition } = require('./correlation');
 const portfolioRisk = require('./portfolio');
 const { PortfolioManager } = require('./portfolio-manager');
+const { startStrategies, getStatus: getStrategyStatus } = require('./strategies/index');
 
 // ── Settings ──────────────────────────────────────────
 const SETTINGS_PATH = path.join(__dirname, 'settings.json');
@@ -1240,6 +1241,12 @@ app.post('/api/portfolio/:id/allocate', (req, res) => {
   res.json({ ok: true, snapshot: portfolioManager.get(id)?.snapshot() });
 });
 
+// ── Strategy Status ────────────────────────────────────────────────────────────
+app.get('/api/strategies', (_req, res) => {
+  try { res.json(getStrategyStatus()); }
+  catch { res.json([]); }
+});
+
 // ── Broker API ─────────────────────────────────────────────────────────────────
 app.get('/api/broker/health', async (_req, res) => {
   try { res.json(await broker.healthCheck()); }
@@ -1782,6 +1789,10 @@ async function startServer() {
   setInterval(analysiereMarktmodus, 30 * 60 * 1000);
   setInterval(syncPortfolioCapital, 5 * 60 * 1000);
   setTimeout(syncPortfolioCapital, 5000);
+
+  // Start autonomous strategy signal generators (all bots, all assets)
+  startStrategies(broker, SETTINGS, { port: PORT, log: addLog });
+  addLog('info', '🤖 Autonomous strategies started — all bots generating signals internally');
 
   // ML-Status alle 5 Min aktualisieren
   setInterval(aktualisiereMlStatus, 5 * 60 * 1000);
