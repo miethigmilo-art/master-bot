@@ -12,8 +12,8 @@ const { ema, atr, rsi, bollinger }  = require('./indicators');
 
 class AdaptiveRegimeStrategy extends BaseStrategy {
   constructor(settings, marketData, opts) {
-    this._defaultTimeframe = 'H1';
     super('adaptive', settings, marketData, { ...opts, cooldownMs: 3 * 3600_000 });
+    this._defaultTimeframe = 'H1';
   }
 
   async onStart() {

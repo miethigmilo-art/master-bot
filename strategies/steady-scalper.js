@@ -16,8 +16,8 @@ const { ema, rsi, atr }     = require('./indicators');
 
 class SteadyScalperStrategy extends BaseStrategy {
   constructor(settings, marketData, opts) {
-    this._defaultTimeframe = 'M5';
-    super('steady', settings, marketData, { ...opts, cooldownMs: 30 * 60_000 }); // 30min cooldown
+    super('steady', settings, marketData, { ...opts, cooldownMs: 30 * 60_000 });
+    this._defaultTimeframe = 'M5'; // 30min cooldown
     this._prevPrice = null;
     this._prevEma8  = null;
   }

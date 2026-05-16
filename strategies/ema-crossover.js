@@ -11,8 +11,8 @@ const { ema, atr }     = require('./indicators');
 
 class EMACrossoverStrategy extends BaseStrategy {
   constructor(settings, marketData, opts) {
-    this._defaultTimeframe = 'H1';
     super('mittel', settings, marketData, { ...opts, cooldownMs: 4 * 3600_000 });
+    this._defaultTimeframe = 'H1';
     this._prevEma20 = null;
     this._prevEma50 = null;
   }

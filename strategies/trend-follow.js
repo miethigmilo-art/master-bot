@@ -11,8 +11,8 @@ const { ema, rsi, atr } = require('./indicators');
 
 class TrendFollowStrategy extends BaseStrategy {
   constructor(settings, marketData, opts) {
-    this._defaultTimeframe = 'H4';
     super('konservativ', settings, marketData, { ...opts, cooldownMs: 12 * 3600_000 });
+    this._defaultTimeframe = 'H4';
   }
 
   async onStart() {

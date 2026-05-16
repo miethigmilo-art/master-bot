@@ -11,8 +11,8 @@ const { rsi, atr, bollinger, ema } = require('./indicators');
 
 class RSIReversionStrategy extends BaseStrategy {
   constructor(settings, marketData, opts) {
-    this._defaultTimeframe = 'M15';
     super('optimiert', settings, marketData, { ...opts, cooldownMs: 2 * 3600_000 });
+    this._defaultTimeframe = 'M15';
   }
 
   async onStart() {

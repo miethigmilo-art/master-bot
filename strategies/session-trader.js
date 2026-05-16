@@ -15,8 +15,8 @@ const SESSION_WINDOW  = 2;   // trade only within 2h of session open
 
 class SessionTraderStrategy extends BaseStrategy {
   constructor(settings, marketData, opts) {
-    this._defaultTimeframe = 'M15';
     super('test', settings, marketData, { ...opts, cooldownMs: 5 * 3600_000 });
+    this._defaultTimeframe = 'M15';
     this._lastSessionHour = -1;
   }
 

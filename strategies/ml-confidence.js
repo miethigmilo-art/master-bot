@@ -11,8 +11,8 @@ const axios = require('axios');
 
 class MLConfidenceStrategy extends BaseStrategy {
   constructor(settings, marketData, opts) {
-    this._defaultTimeframe = 'H1';
     super('smart', settings, marketData, { ...opts, cooldownMs: 6 * 3600_000 });
+    this._defaultTimeframe = 'H1';
     this._mlUrl = process.env.ML_SERVICE_URL || null;
   }
 

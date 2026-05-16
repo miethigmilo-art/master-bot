@@ -11,8 +11,8 @@ const { atr, avg }     = require('./indicators');
 
 class BreakoutStrategy extends BaseStrategy {
   constructor(settings, marketData, opts) {
-    this._defaultTimeframe = 'H1';
     super('aggressiv', settings, marketData, { ...opts, cooldownMs: 3 * 3600_000 });
+    this._defaultTimeframe = 'H1';
   }
 
   async onStart() {
