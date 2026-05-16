@@ -278,4 +278,4 @@ class SignalGenerator {
   }
 }
 
-module.exports = { SignalGenerator, detectSignal, ema, atr, rsi };
+// ── Multi-Asset Scanner ────────────�

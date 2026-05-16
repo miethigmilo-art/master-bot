@@ -26,7 +26,10 @@ const { bus, STREAMS, EVENT_TYPES } = require('./eventbus');
 const { RiskEngine } = require('./risk_engine');
 const { aggregateAgents } = require('./agents');
 const { breakers, dedup, metrics, validator } = require('./hardening');
-const { SignalGenerator } = require('./signal_generator');
+const { SignalGenerator, MultiAssetScanner } = require('./signal_generator');
+const { createBroker } = require('./broker');
+const { ReplayEngine, createReplayRouter } = require('./replay');
+const { startSnapshotLoop, reconcileOnStartup, deduplicator } = require('./recovery');
 
 // ── Settings ──────────────────────────────────────────
 const SETTINGS_PATH = path.join(__dirname, 'settings.json');
@@ -49,6 +52,11 @@ const KONTEN = {
   adaptive:    { apiKey: process.env.API_KEY_TEST2,      email: process.env.EMAIL_TEST2,      password: process.env.PASSWORD_TEST2,      cst: null, token: null },
   steady:      { apiKey: process.env.API_KEY_STEADY,     email: process.env.EMAIL_STEADY,     password: process.env.PASSWORD_STEADY,     cst: null, token: null },
 };
+
+// ── Broker Abstraction ────────────────────────────────
+// Set BROKER_ADAPTER=paper in .env / Railway for dry-run mode.
+// Falls back to Capital.com adapter (uses KONTEN sessions above).
+const broker = createBroker(KONTEN);
 
 // ── State ─────────────────────────────────────────────
 const PERF_PATH   = path.join(DATA_DIR, 'performance.json');
@@ -154,6 +162,15 @@ function waitForRiskDecision(signalEventId, timeoutMs) {
 
 bus.subscribe('*', function(event) {
   broadcast('bus_event', { stream: event.stream, type: event.type, source: event.source, ts: event.timestamp });
+});
+
+// ── Audit Persistence: write every bus event to audit.jsonl ─────────────────
+// This feeds the Replay Engine (Phase 9) with durable event history.
+const AUDIT_PATH = path.join(DATA_DIR, 'audit.jsonl');
+bus.subscribe('*', function(event) {
+  try {
+    fs.appendFileSync(AUDIT_PATH, JSON.stringify(event) + '\n');
+  } catch {}
 });
 
 // ── Capital.com Auth ──────────────────────────────────
@@ -818,14 +835,14 @@ async function handleWebhook(req, res, name) {
   aktiveTrades[name] = true;
   try {
     addLog('info', `📨 Signal [${name}]: ${JSON.stringify(req.body)}`);
-    const sigReceivedEvent = bus.emit_event(EVENT_TYPES.SIGNAL_RECEIVED, 'webhook', { strategie: name, side: req.body.side, sl: req.body.sl, tp: req.body.tp });
+    const sigReceivedEvent = bus.emit_event(EVENT_TYPES.SIGNAL_RECEIVED, 'webhook', { strategie: name, epic: req.body.epic || 'GOLD', side: req.body.side, sl: req.body.sl, tp: req.body.tp });
     const correlationId = sigReceivedEvent.id;  // Root-Event-ID — folgt dem Signal durch alle Stages
     metrics.inc('signals_received');
-    const { side, sl, tp } = req.body;
+    const { side, sl, tp, epic = 'GOLD' } = req.body;
     if (!side || !sl || !tp) return res.status(400).json({ error: 'Fehlende Felder (side/sl/tp)' });
 
     // Signal für späteren Backtest-Replay loggen
-    const _sig = { ts: Date.now(), strategie: name, side, sl, tp };
+    const _sig = { ts: Date.now(), strategie: name, epic, side, sl, tp };
     try { fs.appendFileSync(SIGNALS_PATH, JSON.stringify(_sig) + '\n'); } catch {}
     db.addSignal(_sig).catch(() => {});
 
@@ -877,7 +894,7 @@ async function handleWebhook(req, res, name) {
     // SIGNAL_ENRICHED emittieren — Risk Engine subscribt auf diesen Event
     // und emittiert daraufhin RISK_SIZED oder RISK_REJECTED.
     const sigEnrichedEvent = bus.emit_event(EVENT_TYPES.SIGNAL_ENRICHED, 'webhook', {
-      correlationId, strategie: name, side, sl: slF, tp: tpF, entry,
+      correlationId, strategie: name, epic, side, sl: slF, tp: tpF, entry,
       equity, rrr, drawdownPct: ((s.startEquity - equity) / s.startEquity) * 100,
     }, correlationId);
     metrics.inc('signals_enriched');
@@ -936,7 +953,7 @@ async function handleWebhook(req, res, name) {
       }
     }
 
-    await closePositions(name, 'GOLD');
+    await closePositions(name, epic);
     // -- V4 Multi-Agent: Signal-Aggregation ----------------------------
     const agentCtx = {
       name, side, entry, equity, rrr,
@@ -970,7 +987,7 @@ async function handleWebhook(req, res, name) {
     const riskCapital  = equity * (s.riskPct / 100) * sizingFaktor;
     const size = slDist > 0 ? Math.max(1, parseFloat((riskCapital / slDist).toFixed(1))) : 1;
 
-    const order = { epic: 'GOLD', direction: side, size, guaranteedStop: false, stopLevel: slF, profitLevel: tpF };
+    const order = { epic, direction: side, size, guaranteedStop: false, stopLevel: slF, profitLevel: tpF };
     addLog('info', `\u{1F4E4} [${name}] Order: ${JSON.stringify(order)}`);
     const _t1 = Date.now();
     await breakers.broker.call(() => placeOrder(name, order));
@@ -979,9 +996,9 @@ async function handleWebhook(req, res, name) {
 
     logFeature(name, side, equity, rrr, true, null, extras, correlationId);
     await tg(`${side === 'BUY' ? '\u{1F7E2}' : '\u{1F534}'} <b>${side === 'BUY' ? 'LONG' : 'SHORT'}</b> — <b>${name}</b>\nSize: ${size} | SL: ${slF} | TP: ${tpF}${ml.trainiert ? ` | ML: ${(ml.konfidenz*100).toFixed(0)}%` : ''}`);
-    bus.emit_event(EVENT_TYPES.ORDER_PLACED, 'execution', { correlationId, strategie: name, side, size, sl: slF, tp: tpF, equity }, correlationId);
-    broadcast('trade', { name, side, size, sl: slF, tp: tpF, equity });
-    res.json({ status: 'ok', name, size, sl: slF, tp: tpF });
+    bus.emit_event(EVENT_TYPES.ORDER_PLACED, 'execution', { correlationId, strategie: name, epic, side, size, sl: slF, tp: tpF, equity }, correlationId);
+    broadcast('trade', { name, epic, side, size, sl: slF, tp: tpF, equity });
+    res.json({ status: 'ok', name, epic, size, sl: slF, tp: tpF });
 
   } catch (err) {
     const detail = err.response?.data || err.message;
@@ -1099,12 +1116,12 @@ app.post('/pnl/:name', async (req, res) => {
 // ── SL Update ─────────────────────────────────────────────────────
 app.post('/webhook/update_sl/:name', async (req, res) => {
   const { name } = req.params;
-  const { sl } = req.body;
+  const { sl, epic = 'GOLD' } = req.body;
   if (!sl || !KONTEN[name]) return res.status(400).json({ error: 'Ungültig' });
   try {
     await ensureAuth(name);
     const positions = await getPositions(name);
-    const pos = positions.find(p => p.market?.epic === 'GOLD');
+    const pos = positions.find(p => p.market?.epic === epic);
     if (!pos) return res.json({ status: 'keine Position' });
     await axios.put(`${BASE_URL}/positions/${pos.position.dealId}`, { stopLevel: parseFloat(sl) }, { headers: headers(name) });
     res.json({ status: 'ok', sl });
@@ -1439,6 +1456,24 @@ app.post('/api/signal-generator/stop', (req, res) => {
   res.json({ ok: true, msg: 'Signal Generator gestoppt' });
 });
 
+// Hot-add instrument to running scanner: POST /api/scanner/instruments { epic, strategie, rrr?, resolution? }
+app.post('/api/scanner/instruments', (req, res) => {
+  if (!sigGen) return res.status(400).json({ error: 'Scanner nicht aktiv' });
+  const { epic, strategie, rrr, resolution, candleCount } = req.body;
+  if (!epic || !strategie) return res.status(400).json({ error: 'epic und strategie erforderlich' });
+  if (!SETTINGS[strategie]) return res.status(400).json({ error: 'Unbekannte Strategie: ' + strategie });
+  sigGen.addInstrument({ epic, strategie, rrr: rrr || 2.0, resolution: resolution || 'MINUTE', candleCount: candleCount || 100 });
+  res.json({ ok: true, msg: `${epic} → ${strategie} hinzugefügt`, status: sigGen.status() });
+});
+
+// Remove instrument: DELETE /api/scanner/instruments/:epic
+app.delete('/api/scanner/instruments/:epic', (req, res) => {
+  if (!sigGen) return res.status(400).json({ error: 'Scanner nicht aktiv' });
+  const removed = sigGen.removeInstrument(req.params.epic);
+  if (!removed) return res.status(404).json({ error: `Instrument nicht gefunden: ${req.params.epic}` });
+  res.json({ ok: true, msg: `${req.params.epic} entfernt`, status: sigGen.status() });
+});
+
 // ── Audit Trail ─────────────────────────────────────────────────────────────────────────────────────────
 // Gibt die letzten N Events aus dem Bus-Ring-Buffer zurück (für Replay/Debug)
 app.get('/api/audit', (req, res) => {
@@ -1473,6 +1508,17 @@ app.get('/api/audit/:correlationId', (req, res) => {
     totalMs: trace[trace.length-1].timestamp - trace[0].timestamp,
   });
 });
+
+// ── Replay Engine (HELIX Phase 9) ───────────────────────────────────────────
+// GET  /api/replay            → list replayable correlationIds
+// GET  /api/replay/:id        → full timeline for one trade
+// POST /api/replay/simulate   → dry-run signal through current logic
+const replayEngine = new ReplayEngine({
+  auditPath: path.join(DATA_DIR, 'audit.jsonl'),
+  db,
+  addLog,
+});
+app.use('/api/replay', createReplayRouter(replayEngine, handleWebhook));
 
 // ── State Snapshot ──────────────────────────────────────────────────────────────────────────────────────
 // Authoritative full state für Dashboard-Resync nach WS-Reconnect
@@ -1521,6 +1567,29 @@ app.get('/api/state', (req, res) => {
   }
 });
 
+// ── Recovery Status API ─────────────────────────────────────────────────────
+app.get('/api/recovery/snapshot', (req, res) => {
+  const { loadSnapshot } = require('./recovery');
+  const snap = loadSnapshot(path.join(DATA_DIR, 'snapshot.json'));
+  if (!snap) return res.json({ snapshot: null, msg: 'Kein Snapshot vorhanden' });
+  res.json({ snapshot: snap });
+});
+
+app.post('/api/recovery/reconcile', async (req, res) => {
+  try {
+    const result = await reconcileOnStartup({
+      broker,
+      konten:          KONTEN,
+      snapshotPath:    path.join(DATA_DIR, 'snapshot.json'),
+      addLog,
+      autoCloseOrphans: req.body?.autoClose === true,
+    });
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Health ─────────────────────────────────────────────────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({
   status:      'ok',
@@ -1538,97 +1607,3 @@ async function startServer() {
       addLog('info', '🐘 PostgreSQL verbunden — lade Daten aus DB...');
       for (const name of Object.keys(KONTEN)) {
         try {
-          const dbTrades = await db.getTrades(name, 500);
-          if (dbTrades.length > 0) {
-            tradeHistory[name] = dbTrades;
-            addLog('info', `[${name}] ${dbTrades.length} Trades aus DB geladen`);
-          }
-        } catch {}
-        try {
-          const dbEquity = await db.getEquityHistory(name, 500);
-          if (dbEquity.length > 0) equityHistory[name] = dbEquity;
-        } catch {}
-        try {
-          const dbPerf = await db.getPerformance(name);
-          if (dbPerf) performance[name] = { ...performance[name], ...dbPerf };
-        } catch {}
-        try {
-          const dbStunden = await db.getStunden(name);
-          if (Object.keys(dbStunden).length > 0) stundenStats[name] = dbStunden;
-        } catch {}
-        try {
-          const dbTuning = await db.getTuning(name);
-          if (dbTuning.length > 0) tuningHistory[name] = dbTuning;
-        } catch {}
-      }
-      try {
-        const dbMM = await db.getMarketMode();
-        if (dbMM) marketMode = dbMM;
-      } catch {}
-      addLog('info', '🐘 DB-Sync abgeschlossen');
-    } catch (err) {
-      addLog('warn', `⚠️ DB-Init fehlgeschlagen (JSON-Fallback): ${err.message}`);
-    }
-  } else {
-    addLog('info', '📁 Kein DATABASE_URL — JSON-Fallback aktiv');
-  }
-
-  const riskEngine = new RiskEngine(() => ({
-    settings: SETTINGS,
-    performance,
-    marketMode,
-    marketModes: MARKET_MODES,
-    scorePauses,
-    tagesStart,
-  }));
-  addLog('info', '⚙️ Risk Engine initialisiert (Event Bus aktiv)');
-
-  server.listen(PORT, () => {
-    addLog('info', `🚀 Master Bot laeuft auf Port ${PORT} (DB: ${db.available ? 'PostgreSQL' : 'JSON'})`);
-    console.log(`Master Bot auf Port ${PORT}`);
-  });
-
-  // Market Mode alle 30 Min aktualisieren (+ sofort nach 5s)
-  setTimeout(analysiereMarktmodus, 5 * 1000);
-  setInterval(analysiereMarktmodus, 30 * 60 * 1000);
-
-  // ML-Status alle 5 Min aktualisieren
-  setInterval(aktualisiereMlStatus, 5 * 60 * 1000);
-
-  // Meta-Learning: Modell-Drift alle 60 Min pruefen (+ sofort nach 30s)
-  setTimeout(pruefeModelDrift, 30 * 1000);
-  setInterval(pruefeModelDrift, META_CFG.CHECK_INTERVAL * 60 * 1000);
-
-  // Strategie-Score alle 4h pruefen (+ sofort nach 10s)
-  setTimeout(pruefeAlleScores, 10 * 1000);
-  setInterval(pruefeAlleScores, 4 * 60 * 60 * 1000);
-
-  // Signal Generator (V4 #14) — eigene Signale ohne TradingView
-  if (process.env.SIGNAL_GEN_ENABLED === 'true') {
-    const sgStrategie = process.env.SIGNAL_GEN_STRATEGIE || Object.keys(KONTEN)[0];
-    sigGen = new SignalGenerator({
-      baseUrl:       BASE_URL,
-      getHeaders:    (name) => Promise.resolve(headers(name)),
-      ensureAuth:    ensureAuth,
-      addLog:        addLog,
-      strategie:     sgStrategie,
-      port:          PORT,
-      rrr:           process.env.SIGNAL_GEN_RRR       || '2.0',
-      atrSlFactor:   process.env.SIGNAL_GEN_ATR_SL    || '1.5',
-      intervalMs:    (parseInt(process.env.SIGNAL_GEN_INTERVAL || '60', 10)) * 1000,
-      epic:          process.env.SIGNAL_GEN_EPIC       || 'GOLD',
-      resolution:    process.env.SIGNAL_GEN_RESOLUTION || 'MINUTE',
-      candleCount:   parseInt(process.env.SIGNAL_GEN_CANDLES || '100', 10),
-      secret:        process.env.WEBHOOK_SECRET        || '',
-    });
-    sigGen.start();
-    addLog('info', '[SigGen] Signal Generator aktiv fuer ' + sgStrategie + ' (ENV: SIGNAL_GEN_ENABLED=true)');
-  } else {
-    addLog('info', '[SigGen] Signal Generator inaktiv (ENV: SIGNAL_GEN_ENABLED=false oder nicht gesetzt)');
-  }
-}
-
-startServer().catch(err => {
-  console.error('Startup-Fehler:', err);
-  process.exit(1);
-});
