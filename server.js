@@ -6,11 +6,26 @@ const path    = require('path');
 const http    = require('http');
 const { WebSocketServer } = require('ws');
 
+// ── Security Layer: Startup Checks ───────────────────────────────────────────
+const { validateSecrets, sanitizeForLog } = require('./security/secrets');
+validateSecrets();  // exits with code 1 if API_SECRET is missing
+
+const { validateOrder, validateWebhookPayload } = require('./security/order-validator');
+const { killSwitch }                            = require('./security/kill-switch');
+const { eventStore, EVENT_TYPES: SEC_EVENT_TYPES } = require('./security/event-store');
+const { authMiddleware }                        = require('./security/auth-middleware');
+const { deduplicator: secDeduplicator }         = require('./security/deduplication');
+const { BrokerSandbox }                         = require('./security/broker-sandbox');
+const { runRecoveryTests }                      = require('./security/recovery-test');
+// ─────────────────────────────────────────────────────────────────────────────
+
 const app    = express();
 const server = http.createServer(app);
 const wss    = new WebSocketServer({ server });
 
 app.use(express.json());
+// Auth middleware must be registered BEFORE static files and all routes
+app.use(authMiddleware);
 app.use(express.static(path.join(__dirname, 'public')));
 
 const PORT     = process.env.PORT || 8080;
@@ -35,7 +50,6 @@ const { adaptiveSizingFactor } = require('./sizing');
 const { correlationFilter, trackPosition } = require('./correlation');
 const portfolioRisk = require('./portfolio');
 const { PortfolioManager } = require('./portfolio-manager');
-const { startStrategies, getStatus: getStrategyStatus } = require('./strategies/index');
 
 // ── Settings ──────────────────────────────────────────
 const SETTINGS_PATH = path.join(__dirname, 'settings.json');
@@ -54,7 +68,7 @@ function saveSettings() {
 const STRATEGY_IDS = Object.keys(SETTINGS);
 
 // ── Broker + Portfolio Manager ────────────────────────
-const broker = createBroker();   // reads BROKER_ADAPTER env var (default: ibkr)
+const broker = new BrokerSandbox(createBroker());   // reads BROKER_ADAPTER env var; sandboxed when BROKER_SANDBOX=true
 const portfolioManager = new PortfolioManager();
 
 // Wire broker events into EventBus
@@ -833,6 +847,21 @@ function getKonfidenzSchwelle(side, hour, weekday) {
 
 // ── Webhook Handler ───────────────────────────────────
 async function handleWebhook(req, res, name) {
+  // ── Security: Kill Switch (first gate) ───────────────────────────────────
+  if (killSwitch.isActive()) {
+    const ks = killSwitch.status();
+    addLog('warn', `🔴 [KillSwitch] Webhook blocked for ${name}: ${ks.reason}`);
+    return res.status(503).json({ status: 'blocked', reason: `KillSwitch active: ${ks.reason}`, activatedAt: ks.activatedAt });
+  }
+
+  // ── Security: Webhook Payload Validation ──────────────────────────────────
+  const payloadCheck = validateWebhookPayload(req.body);
+  if (!payloadCheck.valid) {
+    addLog('warn', `[OrderValidator] ${name}: payload rejected — ${payloadCheck.reason}`);
+    eventStore.append(SEC_EVENT_TYPES.ORDER_VALIDATION_FAILED, { strategie: name, reason: payloadCheck.reason, body: sanitizeForLog(req.body) });
+    return res.status(400).json({ status: 'rejected', reason: payloadCheck.reason });
+  }
+
   const s = SETTINGS[name];
   if (!s) return res.status(400).json({ error: 'Unbekannte Strategie' });
   if (!s.enabled) return res.json({ status: 'deaktiviert', strategie: name });
@@ -841,11 +870,21 @@ async function handleWebhook(req, res, name) {
   if (process.env.WEBHOOK_SECRET && secret !== process.env.WEBHOOK_SECRET)
     return res.status(401).json({ error: 'Ungültiger Secret' });
 
+  // ── Security: correlationId-based Deduplication ───────────────────────────
+  // Extract or generate a correlationId from the incoming payload.
+  const incomingCorrelationId = req.body.correlationId || null;
+  if (incomingCorrelationId && secDeduplicator.isDuplicate(incomingCorrelationId)) {
+    metrics.inc('signal_dedup');
+    addLog('warn', `[Security/Dedup] ${name}: duplicate correlationId ${incomingCorrelationId} — rejected`);
+    eventStore.append(SEC_EVENT_TYPES.WEBHOOK_DUPLICATE, { strategie: name, correlationId: incomingCorrelationId });
+    return res.json({ status: 'duplicate', correlationId: incomingCorrelationId });
+  }
+
   if (aktiveTrades[name]) return res.status(429).json({ error: 'Trade läuft bereits' });
   if (letzterTrade[name] && Date.now() - letzterTrade[name] < 30000)
     return res.status(429).json({ error: 'Cooldown aktiv (30s)' });
 
-  // -- HARDENING: Signal Deduplication ----------------------------------
+  // -- HARDENING: Signal Deduplication (existing 15s window) ----------------
   if (dedup.isDuplicate(name, req.body.side, req.body.sl, req.body.tp)) {
     metrics.inc('signal_dedup');
     addLog('warn', `[Dedup] ${name}: identisches Signal innerhalb 15s ignoriert`);
@@ -854,9 +893,13 @@ async function handleWebhook(req, res, name) {
 
   aktiveTrades[name] = true;
   try {
-    addLog('info', `📨 Signal [${name}]: ${JSON.stringify(req.body)}`);
+    addLog('info', `📨 Signal [${name}]: ${JSON.stringify(sanitizeForLog(req.body))}`);
     const sigReceivedEvent = bus.emit_event(EVENT_TYPES.SIGNAL_RECEIVED, 'webhook', { strategie: name, epic: req.body.epic || 'GOLD', side: req.body.side, sl: req.body.sl, tp: req.body.tp });
-    const correlationId = sigReceivedEvent.id;  // Root-Event-ID — folgt dem Signal durch alle Stages
+    const correlationId = incomingCorrelationId || sigReceivedEvent.id;  // Root-Event-ID — folgt dem Signal durch alle Stages
+
+    // ── Security: Record SIGNAL_IN in event store ─────────────────────────
+    eventStore.append(SEC_EVENT_TYPES.SIGNAL_IN, { strategie: name, epic: req.body.epic || 'GOLD', side: req.body.side, sl: req.body.sl, tp: req.body.tp }, correlationId);
+
     metrics.inc('signals_received');
     const { side, sl, tp, epic = 'GOLD' } = req.body;
     if (!side || !sl || !tp) return res.status(400).json({ error: 'Fehlende Felder (side/sl/tp)' });
@@ -1018,6 +1061,22 @@ async function handleWebhook(req, res, name) {
       strategyId:    name,
       correlationId,
     };
+    // ── Security: Order Validation (before broker) ────────────────────────
+    const orderCheck = validateOrder({
+      symbol:    order.symbol,
+      side:      order.side,
+      size:      order.size,
+      entry:     entry || null,
+      sl:        slF,
+      tp:        tpF,
+      orderType: order.orderType,
+    }, s);
+    if (!orderCheck.valid) {
+      addLog('warn', `[OrderValidator] ${name}: order rejected — ${orderCheck.reason}`);
+      eventStore.append(SEC_EVENT_TYPES.ORDER_REJECTED, { strategie: name, reason: orderCheck.reason, order: sanitizeForLog(order) }, correlationId);
+      return res.status(400).json({ status: 'rejected', reason: orderCheck.reason });
+    }
+
     addLog('info', `\u{1F4E4} [${name}] Order: ${JSON.stringify(order)}`);
     const _t1 = Date.now();
     // ── Portfolio Risk Gate (HELIX Governance) ──────────────────────────────
@@ -1027,6 +1086,7 @@ async function handleWebhook(req, res, name) {
       addLog('warn', `🛡️ [${name}] Portfolio Risk blocked: ${riskCheck.reason}`);
       logFeature(name, side, equity, rrr, false, `PortfolioRisk: ${riskCheck.reason}`, extras);
       bus.emit_event(EVENT_TYPES.RISK_BLOCKED, 'portfolio_manager', { strategie: name, reason: riskCheck.reason, correlationId });
+      eventStore.append(SEC_EVENT_TYPES.ORDER_REJECTED, { strategie: name, reason: riskCheck.reason }, correlationId);
       return res.json({ status: 'blocked', reason: riskCheck.reason });
     }
 
@@ -1034,6 +1094,10 @@ async function handleWebhook(req, res, name) {
     portfolioManager.openPosition(name, orderValueUSD);
     metrics.timing('broker_latency', Date.now() - _t1);
     metrics.inc('orders_placed');
+
+    // ── Security: Record placed order + mark correlationId as seen ────────
+    eventStore.append(SEC_EVENT_TYPES.ORDER_PLACED, { strategie: name, epic, side, size, sl: slF, tp: tpF, equity, dealId: result?.dealId }, correlationId);
+    if (incomingCorrelationId) secDeduplicator.markSeen(incomingCorrelationId);
 
     logFeature(name, side, equity, rrr, true, null, extras, correlationId);
     await tg(`${side === 'BUY' ? '\u{1F7E2}' : '\u{1F534}'} <b>${side === 'BUY' ? 'LONG' : 'SHORT'}</b> — <b>${name}</b>\nSize: ${size} | SL: ${slF} | TP: ${tpF}${ml.trainiert ? ` | ML: ${(ml.konfidenz*100).toFixed(0)}%` : ''}`);
@@ -1239,12 +1303,6 @@ app.post('/api/portfolio/:id/allocate', (req, res) => {
   if (!STRATEGY_IDS.includes(id)) return res.status(404).json({ error: 'Not found' });
   portfolioManager.setAllocation(id, req.body);
   res.json({ ok: true, snapshot: portfolioManager.get(id)?.snapshot() });
-});
-
-// ── Strategy Status ────────────────────────────────────────────────────────────
-app.get('/api/strategies', (_req, res) => {
-  try { res.json(getStrategyStatus()); }
-  catch { res.json([]); }
 });
 
 // ── Broker API ─────────────────────────────────────────────────────────────────
@@ -1642,194 +1700,72 @@ app.get('/api/state', (req, res) => {
   }
 });
 
-// ── Recovery Status API ─────────────────────────────────────────────────────
-app.get('/api/recovery/snapshot', (req, res) => {
-  const { loadSnapshot } = require('./recovery');
-  const snap = loadSnapshot(path.join(DATA_DIR, 'snapshot.json'));
-  if (!snap) return res.json({ snapshot: null, msg: 'Kein Snapshot vorhanden' });
-  res.json({ snapshot: snap });
+// ── Security: Kill Switch API ────────────────────────────────────────────────
+app.get('/api/kill-switch', (req, res) => {
+  res.json(killSwitch.status());
 });
 
-app.post('/api/recovery/reconcile', async (req, res) => {
+app.post('/api/kill-switch/activate', (req, res) => {
+  const { reason, secret } = req.body || {};
+  const apiSecret = process.env.API_SECRET;
+  if (!secret || secret !== apiSecret)
+    return res.status(401).json({ error: 'Invalid secret' });
+  killSwitch.activate(reason || 'Manual activation via API', 'api');
+  eventStore.append(SEC_EVENT_TYPES.KILL_SWITCH_ACTIVATED, { reason, by: 'api' });
+  addLog('warn', `🔴 [KillSwitch] Activated via API: ${reason}`);
+  broadcast('kill_switch', killSwitch.status());
+  res.json({ ok: true, status: killSwitch.status() });
+});
+
+app.post('/api/kill-switch/deactivate', (req, res) => {
+  const { secret } = req.body || {};
+  const apiSecret = process.env.API_SECRET;
+  if (!secret || secret !== apiSecret)
+    return res.status(401).json({ error: 'Invalid secret' });
+  killSwitch.deactivate('api');
+  eventStore.append(SEC_EVENT_TYPES.KILL_SWITCH_DEACTIVATED, { by: 'api' });
+  addLog('info', '🟢 [KillSwitch] Deactivated via API');
+  broadcast('kill_switch', killSwitch.status());
+  res.json({ ok: true, status: killSwitch.status() });
+});
+
+// ── Security: Event Store Replay API ─────────────────────────────────────────
+app.get('/api/events/replay', async (req, res) => {
+  const from = req.query.from ? parseInt(req.query.from) : 0;
+  const to   = req.query.to   ? parseInt(req.query.to)   : Date.now();
+  const type = req.query.type || null;
   try {
-    const result = await reconcileOnStartup({
-      broker,
-      strategies:      STRATEGY_IDS,
-      snapshotPath:    path.join(DATA_DIR, 'snapshot.json'),
-      addLog,
-      autoCloseOrphans: req.body?.autoClose === true,
-    });
-    res.json({ ok: true, ...result });
+    const events = await eventStore.replay(from, to, type);
+    res.json({ count: events.length, from, to, type, events });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ── Health ─────────────────────────────────────────────────────────────────────────────────────────
-// ── Explicit root fallback (belt-and-suspenders for express.static) ─────────
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+app.get('/api/events/replay/:correlationId', async (req, res) => {
+  try {
+    const events = await eventStore.getByCorrelationId(req.params.correlationId);
+    if (!events.length) return res.status(404).json({ error: 'No events found for correlationId' });
+    res.json({ correlationId: req.params.correlationId, count: events.length, events });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.get('/health', (req, res) => res.json({
-  status:      'ok',
-  strategies:  STRATEGY_IDS.length,
-  marketMode:  marketMode.modus,
-  db:          db.available ? 'postgresql' : 'json-fallback',
-  scorePaused: Object.values(scorePauses).filter(s => s.paused).length,
-}));
-
-// ── Server starten ──────────────────────────────────────────────────────────────────────────────
-async function startServer() {
-  if (db.available) {
-    try {
-      await db.init();
-      addLog('info', '🐘 PostgreSQL verbunden — lade Daten aus DB...');
-      for (const name of STRATEGY_IDS) {
-        try {          const dbTrades = await db.getTrades(name, 500);
-          if (dbTrades.length > 0) {
-            tradeHistory[name] = dbTrades;
-            addLog('info', `[${name}] ${dbTrades.length} Trades aus DB geladen`);
-          }
-        } catch {}
-        try {
-          const dbEquity = await db.getEquityHistory(name, 500);
-          if (dbEquity.length > 0) equityHistory[name] = dbEquity;
-        } catch {}
-        try {
-          const dbPerf = await db.getPerformance(name);
-          if (dbPerf) performance[name] = { ...performance[name], ...dbPerf };
-        } catch {}
-        try {
-          const dbStunden = await db.getStunden(name);
-          if (Object.keys(dbStunden).length > 0) stundenStats[name] = dbStunden;
-        } catch {}
-        try {
-          const dbTuning = await db.getTuning(name);
-          if (dbTuning.length > 0) tuningHistory[name] = dbTuning;
-        } catch {}
-      }
-      try {
-        const dbMM = await db.getMarketMode();
-        if (dbMM) marketMode = dbMM;
-      } catch {}
-      addLog('info', '🐘 DB-Sync abgeschlossen');
-    } catch (err) {
-      addLog('warn', `⚠️ DB-Init fehlgeschlagen (JSON-Fallback): ${err.message}`);
-    }
-  } else {
-    addLog('info', '📁 Kein DATABASE_URL — JSON-Fallback aktiv');
+// ── Security: Broker Sandbox Orders ─────────────────────────────────────────
+app.get('/api/broker/sandbox-orders', (req, res) => {
+  if (typeof broker.getInterceptedOrders !== 'function') {
+    return res.json({ sandboxMode: false, orders: [] });
   }
-
-  const riskEngine = new RiskEngine(() => ({
-    settings: SETTINGS,
-    performance,
-    marketMode,
-    marketModes: MARKET_MODES,
-    scorePauses,
-    tagesStart,
-  }));
-  addLog('info', '⚙️ Risk Engine initialisiert (Event Bus aktiv)');
-
-  // ── Phase 10: Snapshot + Recovery ────────────────────────────────────────
-  const SNAPSHOT_PATH = path.join(DATA_DIR, 'snapshot.json');
-  const DEDUP_PATH    = path.join(DATA_DIR, 'dedup.json');
-
-  // Start periodic state snapshots (every 60s)
-  startSnapshotLoop({
-    snapshotPath: SNAPSHOT_PATH,
-    intervalMs:   60_000,
-    addLog,
-    getState: () => ({
-      performance:   JSON.parse(JSON.stringify(performance)),
-      tradeHistory:  JSON.parse(JSON.stringify(tradeHistory)),
-      equityHistory: JSON.parse(JSON.stringify(equityHistory)),
-      marketMode:    JSON.parse(JSON.stringify(marketMode)),
-      tagesStart:    JSON.parse(JSON.stringify(tagesStart)),
-    }),
+  res.json({
+    sandboxMode:  broker.sandboxMode,
+    count:        broker.getInterceptedOrders().length,
+    orders:       broker.getInterceptedOrders(),
   });
-
-  // Initialise event deduplicator (used for idempotent webhook handling)
-  const _dedup = deduplicator({ dedupPath: DEDUP_PATH, addLog });
-
-  // Reconcile open positions at broker vs. local state
-  // Run non-blocking — don't delay server start
-  reconcileOnStartup({
-    broker,
-    strategies:      STRATEGY_IDS,
-    snapshotPath:    SNAPSHOT_PATH,
-    addLog,
-    autoCloseOrphans: process.env.AUTO_CLOSE_ORPHANS === 'true',
-  }).catch(err => addLog('warn', `[Recovery] Startup-Reconciliation Fehler: ${err.message}`));
-
-  server.listen(PORT, () => {
-    addLog('info', `🚀 Master Bot laeuft auf Port ${PORT} (DB: ${db.available ? 'PostgreSQL' : 'JSON'})`);
-    console.log(`Master Bot auf Port ${PORT}`);
-  });
-
-  // ── Phase 7: Auto-Retraining Loop ─────────────────────────────────────────
-  const autoRetrainer = new AutoRetrain({
-    featuresPath: FEATURES_PATH,
-    retrainPath:  path.join(DATA_DIR, 'retrains.jsonl'),
-    mlUrl:        ML_URL,
-    addLog,
-    bus,
-    EVENT_TYPES,
-  });
-  _autoRetrainer = autoRetrainer;
-  if (ML_URL) {
-    autoRetrainer.start();
-    addLog('info', '[AutoRetrain] Retraining-Loop aktiv');
-  } else {
-    addLog('info', '[AutoRetrain] Inaktiv (kein ML_SERVICE_URL gesetzt)');
-  }
-
-  // ── Market Mode alle 30 Min aktualisieren (+ sofort nach 5s)
-  setTimeout(analysiereMarktmodus, 5 * 1000);
-  setInterval(analysiereMarktmodus, 30 * 60 * 1000);
-  setInterval(syncPortfolioCapital, 5 * 60 * 1000);
-  setTimeout(syncPortfolioCapital, 5000);
-
-  // Start autonomous strategy signal generators (all bots, all assets)
-  startStrategies(broker, SETTINGS, { port: PORT, log: addLog });
-  addLog('info', '🤖 Autonomous strategies started — all bots generating signals internally');
-
-  // ML-Status alle 5 Min aktualisieren
-  setInterval(aktualisiereMlStatus, 5 * 60 * 1000);
-
-  // Meta-Learning: Modell-Drift alle 60 Min pruefen (+ sofort nach 30s)
-  setTimeout(pruefeModelDrift, 30 * 1000);
-  setInterval(pruefeModelDrift, META_CFG.CHECK_INTERVAL * 60 * 1000);
-
-  // Strategie-Score alle 4h pruefen (+ sofort nach 10s)
-  setTimeout(pruefeAlleScores, 10 * 1000);
-  setInterval(pruefeAlleScores, 4 * 60 * 60 * 1000);
-
-  // Multi-Asset Scanner (HELIX Phase 3) — scans multiple instruments simultaneously
-  // Set SIGNAL_SCAN_EPICS=GOLD,EURUSD,US500 to override instrument list
-  // Falls back to SIGNAL_GEN_EPIC (single instrument) for backwards compat
-  if (process.env.SIGNAL_GEN_ENABLED === 'true') {
-    sigGen = new MultiAssetScanner({
-      baseUrl:      BASE_URL,
-      getHeaders:   (_name) => Promise.resolve({}),
-      ensureAuth:   ensureAuth,
-      addLog:       addLog,
-      port:         PORT,
-      rrr:          process.env.SIGNAL_GEN_RRR    || '2.0',
-      atrSlFactor:  process.env.SIGNAL_GEN_ATR_SL || '1.5',
-      intervalMs:   (parseInt(process.env.SIGNAL_GEN_INTERVAL || '60', 10)) * 1000,
-      secret:       process.env.WEBHOOK_SECRET    || '',
-      // Explicit instrument list (optional — falls back to env SIGNAL_SCAN_EPICS)
-      instruments:  null,
-    });
-    sigGen.start();
-    addLog('info', '[Scanner] Multi-Asset Scanner aktiv');
-  } else {
-    addLog('info', '[Scanner] Signal Scanner inaktiv (ENV: SIGNAL_GEN_ENABLED=false oder nicht gesetzt)');
-  }
-}
-
-startServer().catch(err => {
-  console.error('Startup-Fehler:', err);
-  process.exit(1);
 });
+
+app.delete('/api/broker/sandbox-orders', (req, res) => {
+  if (typeof broker.clearIntercepted === 'function') broker.clearIntercepted();
+  res.json({ ok: true });
+});
+
