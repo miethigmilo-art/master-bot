@@ -30,7 +30,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 const PORT     = process.env.PORT || 8080;
 const BASE_URL = process.env.BASE_URL;
-const ML_URL   = process.env.ML_SERVICE_URL || null;  // z.B. https://ml-service.up.railway.app
+const _mlRaw   = process.env.ML_SERVICE_URL || null;
+const ML_URL   = _mlRaw ? (_mlRaw.startsWith('http') ? _mlRaw : 'https://' + _mlRaw) : null;
 const DATA_DIR = path.join(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
 
