@@ -51,6 +51,7 @@ const { adaptiveSizingFactor } = require('./sizing');
 const { correlationFilter, trackPosition } = require('./correlation');
 const portfolioRisk = require('./portfolio');
 const { PortfolioManager } = require('./portfolio-manager');
+const { startStrategies, getStatus: getStrategyStatus } = require('./strategies/index');
 
 // ── Settings ──────────────────────────────────────────
 const SETTINGS_PATH = path.join(__dirname, 'settings.json');
