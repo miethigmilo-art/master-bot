@@ -30,6 +30,10 @@ const { SignalGenerator, MultiAssetScanner } = require('./signal_generator');
 const { createBroker } = require('./broker');
 const { ReplayEngine, createReplayRouter } = require('./replay');
 const { startSnapshotLoop, reconcileOnStartup, deduplicator } = require('./recovery');
+const { AutoRetrain } = require('./autoretrain');
+const { adaptiveSizingFactor } = require('./sizing');
+const { correlationFilter, trackPosition } = require('./correlation');
+const portfolioRisk = require('./portfolio');
 
 // ── Settings ──────────────────────────────────────────
 const SETTINGS_PATH = path.join(__dirname, 'settings.json');
