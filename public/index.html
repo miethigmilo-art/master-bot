@@ -2886,9 +2886,11 @@ function SystemHealthScreen({
 }) {
   const D = window.BOT_DATA;
   const [sigGen, setSigGen] = useState(null);
+  const [mlSvcOk, setMlSvcOk] = useState(false);
   const [audit, setAudit] = useState([]);
   useEffect(() => {
     fetch('/api/signal-generator').then(r => r.ok ? r.json() : null).then(d => d && setSigGen(d)).catch(() => {});
+    fetch('/api/ml-status').then(r => r.ok ? r.json() : null).then(d => d && setMlSvcOk(Object.keys(d.status||{}).length > 0 || !!d.url)).catch(() => {});
     fetch('/api/audit').then(r => r.ok ? r.json() : null).then(d => d && setAudit(Array.isArray(d) ? d : [])).catch(() => {});
   }, []);
   const circuits = D.circuits || {};
@@ -2918,7 +2920,7 @@ function SystemHealthScreen({
     cat: 'messaging'
   }, {
     name: 'ML Service',
-    status: 'unknown',
+    status: mlSvcOk ? 'ok' : 'unknown',
     latency: 0,
     count: 0,
     cat: 'ml'
