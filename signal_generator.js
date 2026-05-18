@@ -278,66 +278,84 @@ class SignalGenerator {
   }
 }
 
-// ── Multi-Asset Scanner ────────────�// ── Multi-Asset Scanner ───────────────────────────────────────────────────────
-// Wraps multiple SignalGenerator instances, one per symbol/strategy combo.
-class MultiAssetScanner {
-  constructor({ symbols = [], strategies = [], port = 8080, secret = '', mlUrl = null } = {}) {
-    this._generators = [];
-    this._running    = false;
-    this._logs       = [];
-    this._port       = port;
-    this._secret     = secret;
-    this._mlUrl      = mlUrl;
-    this._symbols    = symbols;
-    this._strategies = strategies;
-    this._signalsGenerated = 0;
-  }
 
-  get running()          { return this._running; }
-  get signalsGenerated() { return this._signalsGenerated; }
-  get logs()             { return this._logs.slice(-200); }
+// ── Multi-Asset Scanner ───────────────────────────────────────────────────────
+// Manages multiple SignalGenerator instances — one per instrument/strategy combo.
+// Compatible with server.js constructor signature.
+class MultiAssetScanner {
+  constructor(opts = {}) {
+    this._opts        = opts;
+    this._generators  = new Map();   // epic → SignalGenerator
+    this._running     = false;
+    this._sigCount    = 0;
+    this._addLog      = opts.addLog || ((lvl, msg) => console.log(msg));
+
+    // Default instruments from env or opts
+    const epicEnv = process.env.SIGNAL_SCAN_EPICS || process.env.SIGNAL_GEN_EPIC || 'XAUUSD';
+    this._defaultInstruments = (opts.instruments || epicEnv.split(',').map(s => s.trim()))
+      .map(e => typeof e === 'string' ? { epic: e, strategie: opts.strategie || 'stegosaurus' } : e);
+  }
 
   start() {
     if (this._running) return;
     this._running = true;
-    const symbols    = this._symbols.length    ? this._symbols    : ['XAUUSD'];
-    const strategies = this._strategies.length ? this._strategies : ['stegosaurus'];
-    for (const strategie of strategies) {
-      for (const symbol of symbols) {
-        const gen = new SignalGenerator({
-          symbol, strategie,
-          port:   this._port,
-          secret: this._secret,
-          mlUrl:  this._mlUrl,
-        });
-        gen.on('signal', () => { this._signalsGenerated++; });
-        gen.start();
-        this._generators.push(gen);
-      }
-    }
-    this._log('info', `[MultiAssetScanner] Started — ${this._generators.length} scanner(s)`);
+    const instruments = this._defaultInstruments.length
+      ? this._defaultInstruments
+      : [{ epic: 'XAUUSD', strategie: 'stegosaurus' }];
+    for (const inst of instruments) this._launchGenerator(inst);
+    this._addLog('info', `[MultiAssetScanner] Started — ${this._generators.size} scanner(s)`);
   }
 
   stop() {
     this._running = false;
-    for (const g of this._generators) g.stop();
-    this._generators = [];
-    this._log('info', '[MultiAssetScanner] Stopped');
+    for (const gen of this._generators.values()) gen.stop();
+    this._generators.clear();
+    this._addLog('info', '[MultiAssetScanner] Stopped');
+  }
+
+  addInstrument({ epic, strategie, rrr, resolution, candleCount } = {}) {
+    if (!epic) return false;
+    if (this._generators.has(epic)) return false;
+    this._launchGenerator({ epic, strategie, rrr, resolution, candleCount });
+    return true;
+  }
+
+  removeInstrument(epic) {
+    const gen = this._generators.get(epic);
+    if (!gen) return false;
+    gen.stop();
+    this._generators.delete(epic);
+    return true;
   }
 
   status() {
     return {
       running:          this._running,
-      scanners:         this._generators.length,
-      signalsGenerated: this._signalsGenerated,
+      scanners:         this._generators.size,
+      signalsGenerated: this._sigCount,
+      instruments:      [...this._generators.keys()],
     };
   }
 
-  _log(level, msg) {
-    const entry = { ts: new Date().toISOString(), level, msg };
-    this._logs.push(entry);
-    if (this._logs.length > 500) this._logs.shift();
-    console.log(msg);
+  _launchGenerator({ epic, strategie, rrr, resolution, candleCount } = {}) {
+    const opts = this._opts;
+    const gen = new SignalGenerator({
+      baseUrl:      opts.baseUrl,
+      getHeaders:   opts.getHeaders   || (() => Promise.resolve({})),
+      ensureAuth:   opts.ensureAuth   || (() => Promise.resolve()),
+      addLog:       opts.addLog       || ((l, m) => console.log(m)),
+      port:         opts.port,
+      rrr:          rrr           || opts.rrr        || '2.0',
+      atrSlFactor:  opts.atrSlFactor  || '1.5',
+      intervalMs:   opts.intervalMs   || 60000,
+      secret:       opts.secret       || '',
+      strategie:    strategie         || opts.strategie || 'stegosaurus',
+      epic:         epic              || 'XAUUSD',
+      resolution:   resolution        || 'MINUTE',
+      candleCount:  candleCount       || 100,
+    });
+    gen.start();
+    this._generators.set(epic, gen);
   }
 }
 
