@@ -22,14 +22,14 @@ const SteadyScalperStrategy      = require('./steady-scalper');
 // Default symbols each strategy watches — override via STRATEGY_SYMBOLS env var (JSON)
 // Format: { "stegosaurus": ["XAUUSD","EURUSD","SPX500"], "ankylosaurus": ["XAUUSD"] }
 const DEFAULT_SYMBOLS = {
-  mittel:      ['XAUUSD', 'EURUSD', 'SPX500', 'US100', 'BTCUSD'],
-  aggressiv:   ['XAUUSD', 'EURUSD', 'SPX500', 'US100', 'BTCUSD', 'ETHUSD'],
-  smart:       ['XAUUSD', 'EURUSD', 'SPX500'],
-  konservativ: ['XAUUSD', 'SPX500', 'US100'],
-  optimiert:   ['XAUUSD', 'EURUSD', 'GBPUSD', 'SPX500'],
-  test:        ['XAUUSD', 'EURUSD', 'SPX500', 'US100'],
-  adaptive:    ['XAUUSD', 'EURUSD', 'SPX500', 'US100', 'BTCUSD'],
-  steady:      ['XAUUSD', 'EURUSD'],
+  stegosaurus:   ['XAUUSD', 'EURUSD', 'SPX500', 'US100', 'BTCUSD'],
+  trex:          ['XAUUSD', 'EURUSD', 'SPX500', 'US100', 'BTCUSD', 'ETHUSD'],
+  raptor:        ['XAUUSD', 'EURUSD', 'SPX500'],
+  brachiosaurus: ['XAUUSD', 'SPX500', 'US100'],
+  pterodactyl:   ['XAUUSD', 'EURUSD', 'GBPUSD', 'SPX500'],
+  triceratops:   ['XAUUSD', 'EURUSD', 'SPX500', 'US100'],
+  spinosaurus:   ['XAUUSD', 'EURUSD', 'SPX500', 'US100', 'BTCUSD'],
+  ankylosaurus:  ['XAUUSD', 'EURUSD'],
 };
 
 // Asset class mapping (symbol → assetClass for broker contract resolution)
