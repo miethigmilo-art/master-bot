@@ -668,7 +668,9 @@ async function mlPredict(name, side, equity, rrr) {
 async function aktualisiereMlStatus() {
   if (!ML_URL) return;
   try {
+    const _t0ml = Date.now();
     const res = await axios.get(`${ML_URL}/status`, { timeout: 5000 });
+    metrics.timing('ml_latency', Date.now() - _t0ml);
     mlStatus = res.data;
     broadcast('ml_status', mlStatus);
   } catch {}

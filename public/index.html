@@ -2903,7 +2903,7 @@ function SystemHealthScreen({
   const services = [{
     name: 'WebSocket',
     status: wsStatus === 'connected' ? 'ok' : 'warn',
-    latency: metrics.avgLatency || 0,
+    latency: metrics.latencies?.broker_latency?.avg || 0,
     count: metrics.signals_received || 0,
     cat: 'transport'
   }, {
@@ -2921,7 +2921,7 @@ function SystemHealthScreen({
   }, {
     name: 'ML Service',
     status: mlSvcOk ? 'ok' : 'unknown',
-    latency: 0,
+    latency: metrics.latencies?.ml_latency?.avg || 0,
     count: 0,
     cat: 'ml'
   }, {
