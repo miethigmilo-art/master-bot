@@ -58,6 +58,8 @@ class BrokerSandbox {
   async modifyOrder(strategyId, dealId, changes) { return this._real.modifyOrder(strategyId, dealId, changes); }
   async healthCheck()                  { return this._real.healthCheck(); }
   async reconnect()                    { return this._real.reconnect(); }
+  streamPrices(symbol, assetClass, cb) { return this._real.streamPrices(symbol, assetClass, cb); }
+  streamOrders(cb)                     { return this._real.streamOrders(cb); }
 
   // Forward EventEmitter methods if the adapter is an EventEmitter
   on(event, listener)   { if (this._real.on)   this._real.on(event, listener);   return this; }
