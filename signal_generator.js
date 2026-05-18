@@ -278,4 +278,67 @@ class SignalGenerator {
   }
 }
 
-// ── Multi-Asset Scanner ────────────�
+// ── Multi-Asset Scanner ────────────�// ── Multi-Asset Scanner ───────────────────────────────────────────────────────
+// Wraps multiple SignalGenerator instances, one per symbol/strategy combo.
+class MultiAssetScanner {
+  constructor({ symbols = [], strategies = [], port = 8080, secret = '', mlUrl = null } = {}) {
+    this._generators = [];
+    this._running    = false;
+    this._logs       = [];
+    this._port       = port;
+    this._secret     = secret;
+    this._mlUrl      = mlUrl;
+    this._symbols    = symbols;
+    this._strategies = strategies;
+    this._signalsGenerated = 0;
+  }
+
+  get running()          { return this._running; }
+  get signalsGenerated() { return this._signalsGenerated; }
+  get logs()             { return this._logs.slice(-200); }
+
+  start() {
+    if (this._running) return;
+    this._running = true;
+    const symbols    = this._symbols.length    ? this._symbols    : ['XAUUSD'];
+    const strategies = this._strategies.length ? this._strategies : ['stegosaurus'];
+    for (const strategie of strategies) {
+      for (const symbol of symbols) {
+        const gen = new SignalGenerator({
+          symbol, strategie,
+          port:   this._port,
+          secret: this._secret,
+          mlUrl:  this._mlUrl,
+        });
+        gen.on('signal', () => { this._signalsGenerated++; });
+        gen.start();
+        this._generators.push(gen);
+      }
+    }
+    this._log('info', `[MultiAssetScanner] Started — ${this._generators.length} scanner(s)`);
+  }
+
+  stop() {
+    this._running = false;
+    for (const g of this._generators) g.stop();
+    this._generators = [];
+    this._log('info', '[MultiAssetScanner] Stopped');
+  }
+
+  status() {
+    return {
+      running:          this._running,
+      scanners:         this._generators.length,
+      signalsGenerated: this._signalsGenerated,
+    };
+  }
+
+  _log(level, msg) {
+    const entry = { ts: new Date().toISOString(), level, msg };
+    this._logs.push(entry);
+    if (this._logs.length > 500) this._logs.shift();
+    console.log(msg);
+  }
+}
+
+module.exports = { SignalGenerator, MultiAssetScanner };
