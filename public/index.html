@@ -3410,13 +3410,20 @@ function ReplayScreen() {
 function ScannerScreen() {
   const [status, setStatus] = useState(null);
   const [form, setForm] = useState({
-    epic: '',
+    epic: 'EURUSD',
+    epicCustom: false,
     strategie: 'mittel',
     rrr: '2.0',
     resolution: 'MINUTE'
   });
   const [msg, setMsg] = useState(null);
   const strategies = ['mittel', 'aggressiv', 'smart', 'konservativ', 'optimiert', 'test', 'adaptive', 'steady'];
+  const PRESET_EPICS = {
+    'Forex Majors':  ['EURUSD','GBPUSD','USDJPY','AUDUSD','USDCAD','USDCHF','NZDUSD','EURJPY','GBPJPY','EURGBP','EURCAD','AUDCAD'],
+    'Commodities':   ['GOLD','SILVER','OIL_CRUDE','NATURALGAS','COPPER','PLATINUM'],
+    'Indices':       ['US500','US30','US100','DE40','UK100','FR40','JP225','AU200','ES35','HK50'],
+    'Crypto':        ['BITCOIN','ETHEREUM','SOLANA','RIPPLE','CARDANO','LITECOIN'],
+  };
   const load = () => {
     fetch('/api/signal-generator').then(r => r.json()).then(setStatus).catch(() => {});
   };
@@ -3449,7 +3456,8 @@ function ScannerScreen() {
       load();
       setForm(f => ({
         ...f,
-        epic: ''
+        epic: 'EURUSD',
+        epicCustom: false,
       }));
     }
   };
@@ -3544,13 +3552,29 @@ function ScannerScreen() {
     className: "card-title"
   }, "Add Instrument")), /*#__PURE__*/React.createElement("div", {
     className: "sc-form"
-  }, /*#__PURE__*/React.createElement("input", {
-    placeholder: "Epic (e.g. EURUSD)",
+  }, /*#__PURE__*/React.createElement("select", {
+    value: form.epicCustom ? '__CUSTOM__' : form.epic,
+    style: {minWidth: 160},
+    onChange: e => {
+      const v = e.target.value;
+      if (v === '__CUSTOM__') setForm(f => ({...f, epicCustom: true, epic: ''}));
+      else setForm(f => ({...f, epicCustom: false, epic: v}));
+    }
+  },
+    Object.entries(PRESET_EPICS).map(([grp, epics]) =>
+      /*#__PURE__*/React.createElement("optgroup", {key: grp, label: grp},
+        epics.map(ep => /*#__PURE__*/React.createElement("option", {key: ep, value: ep}, ep))
+      )
+    ),
+    /*#__PURE__*/React.createElement("optgroup", {label: '──────'},
+      /*#__PURE__*/React.createElement("option", {value: '__CUSTOM__'}, "Custom…")
+    )
+  ), form.epicCustom && /*#__PURE__*/React.createElement("input", {
+    placeholder: "Enter epic (e.g. USDJPY)",
     value: form.epic,
-    onChange: e => setForm(f => ({
-      ...f,
-      epic: e.target.value.toUpperCase()
-    }))
+    style: {minWidth: 130},
+    autoFocus: true,
+    onChange: e => setForm(f => ({...f, epic: e.target.value.toUpperCase()}))
   }), /*#__PURE__*/React.createElement("select", {
     value: form.strategie,
     onChange: e => setForm(f => ({
