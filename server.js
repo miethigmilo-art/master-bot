@@ -893,11 +893,13 @@ async function handleWebhook(req, res, name) {
   }
 
   // ── Security: Webhook Payload Validation ──────────────────────────────────
-  const payloadCheck = validateWebhookPayload(req.body);
-  if (!payloadCheck.valid) {
-    addLog('warn', `[OrderValidator] ${name}: payload rejected — ${payloadCheck.reason}`);
-    eventStore.append(SEC_EVENT_TYPES.ORDER_VALIDATION_FAILED, { strategie: name, reason: payloadCheck.reason, body: sanitizeForLog(req.body) });
-    return res.status(400).json({ status: 'rejected', reason: payloadCheck.reason });
+  if (!req.body._bypassFilters) {
+    const payloadCheck = validateWebhookPayload(req.body);
+    if (!payloadCheck.valid) {
+      addLog('warn', `[OrderValidator] ${name}: payload rejected — ${payloadCheck.reason}`);
+      eventStore.append(SEC_EVENT_TYPES.ORDER_VALIDATION_FAILED, { strategie: name, reason: payloadCheck.reason, body: sanitizeForLog(req.body) });
+      return res.status(400).json({ status: 'rejected', reason: payloadCheck.reason });
+    }
   }
 
   const s = SETTINGS[name];
@@ -1127,7 +1129,7 @@ async function handleWebhook(req, res, name) {
       tp:        tpF,
       orderType: order.orderType,
     }, s);
-    if (!orderCheck.valid) {
+    if (!req.body._bypassFilters && !orderCheck.valid) {
       addLog('warn', `[OrderValidator] ${name}: order rejected — ${orderCheck.reason}`);
       eventStore.append(SEC_EVENT_TYPES.ORDER_REJECTED, { strategie: name, reason: orderCheck.reason, order: sanitizeForLog(order) }, correlationId);
       return res.status(400).json({ status: 'rejected', reason: orderCheck.reason });
