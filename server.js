@@ -31,7 +31,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 const PORT     = process.env.PORT || 8080;
 const BASE_URL = process.env.BASE_URL;
 const _mlRaw   = process.env.ML_SERVICE_URL || null;
-const ML_URL   = _mlRaw ? (_mlRaw.startsWith('http') ? _mlRaw : 'https://' + _mlRaw) : null;
+const ML_URL   = _mlRaw ? (_mlRaw.startsWith('http') ? _mlRaw : `https://${_mlRaw}`) : null;
 const DATA_DIR = path.join(__dirname, 'data');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR);
 
@@ -51,7 +51,6 @@ const { adaptiveSizingFactor } = require('./sizing');
 const { correlationFilter, trackPosition } = require('./correlation');
 const portfolioRisk = require('./portfolio');
 const { PortfolioManager } = require('./portfolio-manager');
-const { startStrategies, getStatus: getStrategyStatus } = require('./strategies/index');
 
 // ── Settings ──────────────────────────────────────────
 const SETTINGS_PATH = path.join(__dirname, 'settings.json');
@@ -226,6 +225,43 @@ bus.subscribe('*', function(event) {
 // Auth is handled inside broker adapter (IBKRAdapter/PaperAdapter).
 async function ensureAuth(_name) { /* no-op — adapter manages connection */ }
 
+// ── Capital.com Market Data Session ──────────────────
+// Used by the Signal Generator to fetch historical price data.
+// Order execution goes through IBKR; only market data comes from Capital.com.
+const _capSession = {
+  cst:       null,
+  secToken:  null,
+  expiresAt: 0,
+};
+
+async function _capitalLogin() {
+  const url      = (process.env.BASE_URL || 'https://demo-api-capital.backend-capital.com/api/v1') + '/session';
+  const apiKey   = process.env.API_KEY;
+  const email    = process.env.EMAIL;
+  const password = process.env.PASSWORD;
+  if (!apiKey || !email || !password) throw new Error('Capital.com market-data credentials missing (API_KEY / EMAIL / PASSWORD)');
+  const r = await axios.post(url, { identifier: email, password }, {
+    headers: { 'X-CAP-API-KEY': apiKey, 'Content-Type': 'application/json' },
+    timeout: 10000,
+  });
+  _capSession.cst      = r.headers['cst'];
+  _capSession.secToken = r.headers['x-security-token'];
+  _capSession.expiresAt = Date.now() + 9 * 60 * 1000; // refresh before 10-min expiry
+  addLog('info', '[CapData] Capital.com market-data session refreshed');
+}
+
+async function getCapitalHeaders() {
+  if (!_capSession.cst || Date.now() > _capSession.expiresAt) {
+    await _capitalLogin();
+  }
+  return {
+    'X-CAP-API-KEY':     process.env.API_KEY,
+    'CST':               _capSession.cst,
+    'X-SECURITY-TOKEN':  _capSession.secToken,
+    'Content-Type':      'application/json',
+  };
+}
+
 async function getEquity(name) {
   // Equity = strategy's virtual allocation within the single broker account
   const vp = portfolioManager.get(name);
@@ -283,7 +319,7 @@ async function tg(msg) {
 
 // ── Regime (Smart) ────────────────────────────────────
 function berechneRegime() {
-  const trades = tradeHistory['raptor'] || [];
+  const trades = tradeHistory['smart'] || [];
   let konsek = 0;
   for (let i = trades.length - 1; i >= 0; i--) { if (trades[i].pnl < 0) konsek++; else break; }
   SMART.konsekVerluste = konsek;
@@ -668,9 +704,7 @@ async function mlPredict(name, side, equity, rrr) {
 async function aktualisiereMlStatus() {
   if (!ML_URL) return;
   try {
-    const _t0ml = Date.now();
     const res = await axios.get(`${ML_URL}/status`, { timeout: 5000 });
-    metrics.timing('ml_latency', Date.now() - _t0ml);
     mlStatus = res.data;
     broadcast('ml_status', mlStatus);
   } catch {}
@@ -1120,10 +1154,10 @@ async function handleWebhook(req, res, name) {
 }
 
 // ── Webhook Routen ─────────────────────────────────────────────────
-['stegosaurus','trex','raptor','brachiosaurus','pterodactyl','triceratops','spinosaurus','ankylosaurus'].forEach(n => {
+['mittel','aggressiv','smart','konservativ','optimiert','test','adaptive','steady'].forEach(n => {
   app.post(`/webhook/${n}`, (req, res) => handleWebhook(req, res, n));
 });
-app.post('/webhook/goldglobe', (req, res) => handleWebhook(req, res, 'raptor'));
+app.post('/webhook/goldglobe', (req, res) => handleWebhook(req, res, 'smart'));
 // ── PnL-Webhook ───────────────────────────────────────────────────────────────
 // TradingView sendet diesen Webhook wenn ein Trade geschlossen wird.
 // Payload: { strategie, pnl, side, datum? }
@@ -1773,15 +1807,24 @@ app.delete('/api/broker/sandbox-orders', (req, res) => {
   res.json({ ok: true });
 });
 
-
-
-// ── Strategies Status ─────────────────────────────────────────────────────────
-app.get('/api/strategies', (_req, res) => {
-  try { res.json(getStrategyStatus()); }
-  catch { res.json([]); }
+// ── Security: Recovery Tests API ─────────────────────────────────────────────
+app.get('/api/recovery/tests', async (req, res) => {
+  try {
+    const result = await runRecoveryTests({
+      killSwitch,
+      deduplicator: secDeduplicator,
+      validateOrder,
+      validateWebhookPayload,
+      portfolioManager,
+      broker,
+    });
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-// ── Recovery API ──────────────────────────────────────────────────────────────
+// ── Recovery Status API ─────────────────────────────────────────────────────
 app.get('/api/recovery/snapshot', (req, res) => {
   const { loadSnapshot } = require('./recovery');
   const snap = loadSnapshot(path.join(DATA_DIR, 'snapshot.json'));
@@ -1804,13 +1847,12 @@ app.post('/api/recovery/reconcile', async (req, res) => {
   }
 });
 
-// ── Root route (Dashboard) ────────────────────────────────────────────────────
+// ── Health ─────────────────────────────────────────────────────────────────────────────────────────
+// ── Explicit root fallback (belt-and-suspenders for express.static) ─────────
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-
-// ── Health Check ─────────────────────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({
   status:      'ok',
   strategies:  STRATEGY_IDS.length,
@@ -1819,6 +1861,7 @@ app.get('/health', (req, res) => res.json({
   scorePaused: Object.values(scorePauses).filter(s => s.paused).length,
 }));
 
+// ── Server starten ──────────────────────────────────────────────────────────────────────────────
 async function startServer() {
   if (db.available) {
     try {
@@ -1904,6 +1947,24 @@ async function startServer() {
   server.listen(PORT, () => {
     addLog('info', `🚀 Master Bot laeuft auf Port ${PORT} (DB: ${db.available ? 'PostgreSQL' : 'JSON'})`);
     console.log(`Master Bot auf Port ${PORT}`);
+
+    // ── Security: Recovery Tests at startup ───────────────────────────────
+    runRecoveryTests({
+      killSwitch,
+      deduplicator: secDeduplicator,
+      validateOrder,
+      validateWebhookPayload,
+      portfolioManager,
+      broker,
+    }).then(r => {
+      addLog('RECOVERY_TESTS', `${r.summary} — allPassed: ${r.allPassed}`);
+      if (!r.allPassed) {
+        const failed = r.results.filter(t => !t.passed).map(t => `${t.name}: ${t.error}`).join(' | ');
+        addLog('warn', `⚠️ [Security] Recovery Tests FAILED: ${failed}`);
+      } else {
+        addLog('info', `✅ [Security] All recovery tests passed`);
+      }
+    }).catch(err => addLog('warn', `[Security] Recovery tests error: ${err.message}`));
   });
 
   // ── Phase 7: Auto-Retraining Loop ─────────────────────────────────────────
@@ -1929,10 +1990,6 @@ async function startServer() {
   setInterval(syncPortfolioCapital, 5 * 60 * 1000);
   setTimeout(syncPortfolioCapital, 5000);
 
-  // Start autonomous strategy signal generators (all bots, all assets)
-  startStrategies(broker, SETTINGS, { port: PORT, log: addLog });
-  addLog('info', '🤖 Autonomous strategies started — all bots generating signals internally');
-
   // ML-Status alle 5 Min aktualisieren
   setInterval(aktualisiereMlStatus, 5 * 60 * 1000);
 
@@ -1950,7 +2007,7 @@ async function startServer() {
   if (process.env.SIGNAL_GEN_ENABLED === 'true') {
     sigGen = new MultiAssetScanner({
       baseUrl:      BASE_URL,
-      getHeaders:   (_name) => Promise.resolve({}),
+      getHeaders:   (_name) => getCapitalHeaders(),
       ensureAuth:   ensureAuth,
       addLog:       addLog,
       port:         PORT,
