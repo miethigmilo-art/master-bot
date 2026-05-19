@@ -1697,15 +1697,28 @@ app.post('/api/test-trade', async (req, res) => {
 
     addLog('info', `🧪 Test-Trade: ${strategie} | ${epic} ${sigSide} | Entry ~${entry} | SL: ${sl} | TP: ${tp}`);
 
-    // Fire through webhook (full pipeline: Risk, ML, Broker)
-    const secret = process.env.WEBHOOK_SECRET || '';
-    const whResp = await axios.post(
-      `http://localhost:${PORT}/webhook/${strategie}`,
-      { epic, side: sigSide, sl, tp },
-      { headers: { 'content-type': 'application/json', 'x-webhook-secret': secret }, timeout: 30000 }
-    );
+    // Fire through handleWebhook directly (avoids internal HTTP loopback issues)
+    const mockResult = await new Promise((resolve) => {
+      const mockReq = {
+        body: { epic, side: sigSide, sl, tp },
+        headers: { 'x-webhook-secret': process.env.WEBHOOK_SECRET || '' },
+        ip: '127.0.0.1',
+        query: {},
+      };
+      let settled = false;
+      const respond = (status, data) => {
+        if (settled) return;
+        settled = true;
+        resolve({ status, data });
+      };
+      const mockRes = {
+        status: (code) => ({ json: (data) => respond(code, data) }),
+        json:   (data) => respond(200, data),
+      };
+      handleWebhook(mockReq, mockRes, strategie).catch(err => respond(500, { error: err.message }));
+    });
 
-    res.json({ ok: true, epic, side: sigSide, entry, sl, tp, grund, result: whResp.data });
+    res.json({ ok: true, epic, side: sigSide, entry, sl, tp, grund, result: mockResult.data, httpStatus: mockResult.status });
   } catch (err) {
     const msg = err.response?.data?.error || err.message;
     addLog('warn', `[TestTrade] Fehler: ${msg}`);
