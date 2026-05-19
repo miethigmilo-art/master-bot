@@ -976,15 +976,15 @@ async function handleWebhook(req, res, name) {
     if (tagesStart[name] == null) tagesStart[name] = equity;
     const tagesPct = ((equity - tagesStart[name]) / tagesStart[name]) * 100;
 
-    if (tagesPct >= s.tagsStopPct) {
+    if (!req.body._bypassFilters && tagesPct >= s.tagsStopPct) {
       return res.json({ status: 'pausiert', grund: 'Tagesziel' });
     }
-    if (s.tagsVerlustPct && tagesPct <= -s.tagsVerlustPct) {
+    if (!req.body._bypassFilters && s.tagsVerlustPct && tagesPct <= -s.tagsVerlustPct) {
       await tg(`\u{1F6D1} ${name} Tagesverlust-Stop -${s.tagsVerlustPct}%`);
       return res.json({ status: 'pausiert', grund: 'Tagesverlust-Stop' });
     }
     const drawdown = ((s.startEquity - equity) / s.startEquity) * 100;
-    if (performance[name].trades > 0 && drawdown >= s.maxDrawdownPct) {
+    if (!req.body._bypassFilters && performance[name].trades > 0 && drawdown >= s.maxDrawdownPct) {
       await tg(`\u{1F6D1} <b>${name}</b> gestoppt — Max. Drawdown erreicht`);
       return res.json({ status: 'gestoppt', grund: 'Max. Drawdown' });
     }
