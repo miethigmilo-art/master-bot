@@ -918,12 +918,12 @@ async function handleWebhook(req, res, name) {
     return res.json({ status: 'duplicate', correlationId: incomingCorrelationId });
   }
 
-  if (aktiveTrades[name]) return res.status(429).json({ error: 'Trade läuft bereits' });
-  if (letzterTrade[name] && Date.now() - letzterTrade[name] < 30000)
+  if (!req.body._bypassFilters && aktiveTrades[name]) return res.status(429).json({ error: 'Trade läuft bereits' });
+  if (!req.body._bypassFilters && letzterTrade[name] && Date.now() - letzterTrade[name] < 30000)
     return res.status(429).json({ error: 'Cooldown aktiv (30s)' });
 
   // -- HARDENING: Signal Deduplication (existing 15s window) ----------------
-  if (dedup.isDuplicate(name, req.body.side, req.body.sl, req.body.tp)) {
+  if (!req.body._bypassFilters && dedup.isDuplicate(name, req.body.side, req.body.sl, req.body.tp)) {
     metrics.inc('signal_dedup');
     addLog('warn', `[Dedup] ${name}: identisches Signal innerhalb 15s ignoriert`);
     return res.status(429).json({ error: 'Duplikat-Signal ignoriert (15s Fenster)' });
