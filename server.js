@@ -1654,7 +1654,7 @@ app.post('/api/test-trade', async (req, res) => {
     return res.status(400).json({ error: 'Ungültige Strategie: ' + strategie });
   try {
     await ensureAuth(strategie);
-    const hdrs = getCapitalHeaders();
+    const hdrs = await getCapitalHeaders();
 
     // Fetch candles for signal detection
     let candles = [];
