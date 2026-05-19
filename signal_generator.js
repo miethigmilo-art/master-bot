@@ -327,15 +327,27 @@ class MultiAssetScanner {
         candleCount: parseInt(process.env.SIGNAL_GEN_CANDLES || '100', 10),
       }));
     }
-    // Default: single gold instrument (backwards compat)
+    // Default multi-asset list when nothing else is configured
     if (!provided || !provided.length) {
-      return [{
-        epic:        process.env.SIGNAL_GEN_EPIC || 'GOLD',
-        strategie:   process.env.SIGNAL_GEN_STRATEGIE || 'stegosaurus',
-        rrr:         this.rrr,
-        resolution:  process.env.SIGNAL_GEN_RESOLUTION || 'MINUTE',
-        candleCount: 100,
-      }];
+      const strat = process.env.SIGNAL_GEN_STRATEGIE || 'stegosaurus';
+      const res   = process.env.SIGNAL_GEN_RESOLUTION || 'MINUTE';
+      // If a single SIGNAL_GEN_EPIC is set, use that only (backwards compat)
+      if (process.env.SIGNAL_GEN_EPIC) {
+        return [{ epic: process.env.SIGNAL_GEN_EPIC, strategie: strat, rrr: this.rrr, resolution: res, candleCount: 100 }];
+      }
+      // Otherwise scan a broad default universe
+      return [
+        { epic: 'GOLD',      strategie: strat, rrr: 2.0, resolution: res,          candleCount: 100 },
+        { epic: 'EURUSD',    strategie: strat, rrr: 2.5, resolution: 'MINUTE_5',   candleCount: 100 },
+        { epic: 'GBPUSD',    strategie: strat, rrr: 2.5, resolution: 'MINUTE_5',   candleCount: 100 },
+        { epic: 'US500',     strategie: strat, rrr: 2.0, resolution: 'MINUTE_15',  candleCount: 100 },
+        { epic: 'BITCOIN',   strategie: strat, rrr: 2.0, resolution: 'MINUTE_15',  candleCount: 100 },
+        { epic: 'SILVER',    strategie: strat, rrr: 2.0, resolution: 'MINUTE_5',   candleCount: 100 },
+        { epic: 'OIL_CRUDE', strategie: strat, rrr: 2.0, resolution: 'MINUTE_15',  candleCount: 100 },
+        { epic: 'USDJPY',    strategie: strat, rrr: 2.5, resolution: 'MINUTE_5',   candleCount: 100 },
+        { epic: 'DE40',      strategie: strat, rrr: 2.0, resolution: 'MINUTE_15',  candleCount: 100 },
+        { epic: 'ETHEREUM',  strategie: strat, rrr: 2.0, resolution: 'MINUTE_15',  candleCount: 100 },
+      ];
     }
     return provided;
   }
