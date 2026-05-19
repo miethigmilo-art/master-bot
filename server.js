@@ -1015,19 +1015,25 @@ async function handleWebhook(req, res, name) {
     // waitForRiskDecision() haelt den HTTP-Request an bis Risk Engine
     // entschieden hat. Timeout = 5s -> fail-SAFE = REJECT (kein Trade).
     let riskDecision;
-    try {
-      riskDecision = await waitForRiskDecision(sigEnrichedEvent.id, 5000);
-    } catch (riskErr) {
-      metrics.error('risk_timeout', `${name}: ${riskErr.message}`);
-      addLog('warn', `[Risk] ${name}: Timeout — Trade wird sicherheitshalber abgebrochen`);
-      return res.json({ status: 'uebersprungen', grund: 'Risk Engine Timeout (fail-safe: reject)' });
-    }
-    if (riskDecision.type === 'RISK_REJECTED') {
-      metrics.inc('risk_rejected');
-      const { grund, code: rCode } = riskDecision.payload;
-      addLog('warn', `[Risk] ${name}: REJECTED (${rCode}) — ${grund}`);
-      logFeature(name, side, equity, rrr, false, `Risk: ${grund}`, extras);
-      return res.json({ status: 'uebersprungen', grund, riskCode: rCode });
+    if (req.body._bypassFilters) {
+      // Bypass mode: skip Risk Engine, use default size
+      riskDecision = { type: 'RISK_SIZED', payload: { size: 1 } };
+      addLog('info', `[Risk] ${name}: Bypass-Modus — Risk Engine übersprungen`);
+    } else {
+      try {
+        riskDecision = await waitForRiskDecision(sigEnrichedEvent.id, 5000);
+      } catch (riskErr) {
+        metrics.error('risk_timeout', `${name}: ${riskErr.message}`);
+        addLog('warn', `[Risk] ${name}: Timeout — Trade wird sicherheitshalber abgebrochen`);
+        return res.json({ status: 'uebersprungen', grund: 'Risk Engine Timeout (fail-safe: reject)' });
+      }
+      if (riskDecision.type === 'RISK_REJECTED') {
+        metrics.inc('risk_rejected');
+        const { grund, code: rCode } = riskDecision.payload;
+        addLog('warn', `[Risk] ${name}: REJECTED (${rCode}) — ${grund}`);
+        logFeature(name, side, equity, rrr, false, `Risk: ${grund}`, extras);
+        return res.json({ status: 'uebersprungen', grund, riskCode: rCode });
+      }
     }
     // RISK_SIZED -> Risk Engine hat Groesse berechnet (wird unten als Fallback genutzt)
     const riskEngineSize = riskDecision.payload?.size ?? null;
@@ -1082,7 +1088,7 @@ async function handleWebhook(req, res, name) {
     const agentVote = aggregateAgents(agentCtx);
     broadcast('agent_vote', { name, avgVote: agentVote.avgVote, approved: agentVote.approved, grund: agentVote.grund });
     addLog('info', `[Agents] ${name}: ${(agentVote.avgVote*100).toFixed(0)}% | ${agentVote.grund}`);
-    if (!agentVote.approved) {
+    if (!req.body._bypassFilters && !agentVote.approved) {
       logFeature(name, side, equity, rrr, false, `Agents: ${agentVote.grund}`, extras);
       return res.json({ status: 'uebersprungen', grund: agentVote.grund, agents: agentVote.agentResults });
     }
