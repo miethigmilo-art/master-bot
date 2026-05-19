@@ -2888,10 +2888,15 @@ function SystemHealthScreen({
   const [sigGen, setSigGen] = useState(null);
   const [mlSvcOk, setMlSvcOk] = useState(false);
   const [audit, setAudit] = useState([]);
+  const [brokerHealth, setBrokerHealth] = useState(null);
   useEffect(() => {
     fetch('/api/signal-generator').then(r => r.ok ? r.json() : null).then(d => d && setSigGen(d)).catch(() => {});
     fetch('/api/ml-status').then(r => r.ok ? r.json() : null).then(d => d && setMlSvcOk(Object.keys(d.status||{}).length > 0 || !!d.url)).catch(() => {});
     fetch('/api/audit').then(r => r.ok ? r.json() : null).then(d => d && setAudit(Array.isArray(d) ? d : [])).catch(() => {});
+    const loadBroker = () => fetch('/api/broker/health').then(r => r.ok ? r.json() : null).then(d => d && setBrokerHealth(d)).catch(() => {});
+    loadBroker();
+    const brokerId = setInterval(loadBroker, 10000);
+    return () => clearInterval(brokerId);
   }, []);
   const circuits = D.circuits || {};
   const metrics = D.metricsSnap || {};
@@ -2930,6 +2935,12 @@ function SystemHealthScreen({
     latency: 0,
     count: sigGen?.signalsGenerated || 0,
     cat: 'signals'
+  }, {
+    name: 'Broker (IBKR)',
+    status: brokerHealth == null ? 'unknown' : brokerHealth.connected ? 'ok' : 'error',
+    latency: brokerHealth?.latencyMs || 0,
+    count: brokerHealth?.reconnects || 0,
+    cat: 'broker'
   }];
   const statusDot = s => s === 'ok' ? 'var(--pos)' : s === 'warn' ? 'var(--warn)' : s === 'off' || s === 'unknown' ? 'var(--text-faint)' : 'var(--neg)';
   const gauge = (val, max = 100) => {
@@ -3161,7 +3172,7 @@ function SystemHealthScreen({
   }, Object.entries(metrics).map(([k, v]) => /*#__PURE__*/React.createElement("div", {
     key: k,
     className: "dd-row"
-  }, /*#__PURE__*/React.createElement("span", null, k.replace(/_/g, ' ')), /*#__PURE__*/React.createElement("span", null, typeof v === 'number' ? v.toLocaleString() : String(v)))), Object.keys(metrics).length === 0 && /*#__PURE__*/React.createElement("div", {
+  }, /*#__PURE__*/React.createElement("span", null, k.replace(/_/g, ' ')), /*#__PURE__*/React.createElement("span", null, typeof v === 'number' ? v.toLocaleString() : typeof v === 'object' && v !== null ? Object.entries(v).map(([k2,v2]) => k2 + ': ' + (typeof v2 === 'number' ? v2.toLocaleString() : String(v2))).join(' · ') : String(v)))), Object.keys(metrics).length === 0 && /*#__PURE__*/React.createElement("div", {
     style: {
       color: 'var(--text-faint)',
       fontSize: 12
@@ -3192,7 +3203,34 @@ function SystemHealthScreen({
       color: 'var(--text-faint)',
       fontSize: 12
     }
-  }, "Cache empty")))));
+  }, "Cache empty"))))), brokerHealth && /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {marginTop: 'var(--pad)'}
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "card-head"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "card-title"
+  }, "Broker — IBKR"), /*#__PURE__*/React.createElement("span", {
+    className: `tag ${brokerHealth.connected ? 'long' : 'short'}`
+  }, brokerHealth.connected ? 'CONNECTED' : 'DISCONNECTED')), /*#__PURE__*/React.createElement("div", {
+    className: "sh-res-grid"
+  }, [
+    ['Account', brokerHealth.account || '—'],
+    ['Balance', brokerHealth.balance > 0 ? '$' + brokerHealth.balance.toLocaleString('en-US', {maximumFractionDigits: 0}) : '—'],
+    ['Positions', String(brokerHealth.positions || 0)],
+    ['Open Orders', String(brokerHealth.openOrders || 0)],
+    ['Reconnects', String(brokerHealth.reconnects || 0)],
+    ['Errors', String(brokerHealth.errors || 0)],
+    ['Last Error', brokerHealth.lastError ? brokerHealth.lastError.msg + ' @ ' + fmtTime(brokerHealth.lastError.ts) : 'None'],
+  ].map(([label, value]) => /*#__PURE__*/React.createElement("div", {
+    key: label,
+    className: "sh-res-card"
+  }, /*#__PURE__*/React.createElement("div", {
+    style: {fontSize: 10, textTransform: 'uppercase', letterSpacing: '.05em', color: 'var(--text-faint)', marginBottom: 4}
+  }, label), /*#__PURE__*/React.createElement("span", {
+    className: "mono",
+    style: {fontSize: 13, fontWeight: 600}
+  }, value))));
 }
 
 // ─── Replay Screen (HELIX Phase 9) ──────────────────────────────────────────────────────
