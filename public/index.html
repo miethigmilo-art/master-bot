@@ -3417,6 +3417,7 @@ function TestTradePanel() {
     side: 'AUTO',
     slPct: '1.0',
     rrr: '2.0',
+    bypass: false,
   });
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -3426,7 +3427,7 @@ function TestTradePanel() {
     setLoading(true);
     setResult(null);
     try {
-      const body = { strategie: form.strategie, epic: form.epic, slPct: form.slPct, rrr: form.rrr };
+      const body = { strategie: form.strategie, epic: form.epic, slPct: form.slPct, rrr: form.rrr, bypass: form.bypass };
       if (form.side !== 'AUTO') body.side = form.side;
       const r = await fetch('/api/test-trade', {
         method: 'POST',
@@ -3442,7 +3443,9 @@ function TestTradePanel() {
   };
 
   const res = result?.result || {};
-  const statusColor = !result ? null : result.ok && (res.status === 'ok' || res.dealId) ? 'var(--pos)' : 'var(--text-faint)';
+  const isOk = result?.ok && (res.status === 'ok' || res.dealId);
+  const isSkip = result?.ok && (res.status === 'uebersprungen' || res.status === 'übersprungen' || res.status === 'pausiert');
+  const statusColor = !result ? null : isOk ? 'var(--pos)' : isSkip ? 'var(--warn, #e0a619)' : 'var(--text-faint)';
 
   return /*#__PURE__*/React.createElement("div", {style: {display: 'flex', flexDirection: 'column', gap: 10}},
     /*#__PURE__*/React.createElement("div", {className: "sc-form", style: {flexWrap: 'wrap'}},
@@ -3471,6 +3474,13 @@ function TestTradePanel() {
         placeholder: "RRR", value: form.rrr, style: {width: 55},
         onChange: e => setForm(f => ({...f, rrr: e.target.value}))
       }),
+      /*#__PURE__*/React.createElement("label", {style: {display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--text-faint)', cursor: 'pointer'}},
+        /*#__PURE__*/React.createElement("input", {
+          type: "checkbox", checked: form.bypass,
+          onChange: e => setForm(f => ({...f, bypass: e.target.checked}))
+        }),
+        "Bypass Filter"
+      ),
       /*#__PURE__*/React.createElement("button", {
         className: "tb-btn",
         style: {background: loading ? 'var(--text-faint)' : '#e06c19', color: '#fff', border: 'none', fontWeight: 600},
@@ -3489,9 +3499,12 @@ function TestTradePanel() {
             ),
             /*#__PURE__*/React.createElement("div", {className: "faint"}, result.grund),
             /*#__PURE__*/React.createElement("div", {style: {marginTop: 2}},
-              "Result: ",
+              /*#__PURE__*/React.createElement("span", null, "Status: "),
               /*#__PURE__*/React.createElement("b", {style: {color: statusColor}},
-                res.status || res.grund || JSON.stringify(res).slice(0, 80)
+                res.status || JSON.stringify(res).slice(0, 60)
+              ),
+              res.grund && /*#__PURE__*/React.createElement("span", {style: {color: 'var(--text-faint)', marginLeft: 6}},
+                "— ", res.grund
               )
             )
           )

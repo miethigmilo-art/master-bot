@@ -988,14 +988,14 @@ async function handleWebhook(req, res, name) {
     }
 
     // Schlechte Handelsstunde erkennen
-    if (istSchlechteStunde(name)) {
+    if (!req.body._bypassFilters && istSchlechteStunde(name)) {
       addLog('tuning', `⏰ [${name}] Schlechte Stunde (${new Date().getHours()}:xx) — übersprungen`);
       logFeature(name, req.body.side, equity, null, false, 'schlechte Handelsstunde');
       return res.json({ status: 'übersprungen', grund: 'schlechte Handelsstunde' });
     }
 
     let regimeModus = 'AKTIV';
-    if (s.regimeFilter) {
+    if (!req.body._bypassFilters && s.regimeFilter) {
       const regime = await pruefeRegime();
       if (regime.geblockt) return res.json({ status: 'übersprungen', grund: regime.grund });
       regimeModus = regime.modus;
@@ -1046,7 +1046,7 @@ async function handleWebhook(req, res, name) {
     }
     trackMlPrediction(name, ml);
     addLog('info', `\u{1F916} [${name}] ML: ${ml.empfehlung} (${ml.konfidenz ? (ml.konfidenz*100).toFixed(0)+'%' : 'kein Modell'}) — ${ml.grund}`);
-    if (ml.empfehlung === 'skip') {
+    if (!req.body._bypassFilters && ml.empfehlung === 'skip') {
       logFeature(name, side, equity, rrr, false, `ML: ${ml.grund}`, extras);
       broadcast('ml_skip', { name, side, konfidenz: ml.konfidenz, grund: ml.grund });
       return res.json({ status: 'übersprungen', grund: ml.grund, ml });
@@ -1661,7 +1661,7 @@ app.delete('/api/scanner/instruments/:epic', (req, res) => {
 // POST /api/test-trade { strategie, epic, side?, slPct?, rrr? }
 // Fetches real candles, tries detectSignal, falls back to forced signal, fires webhook.
 app.post('/api/test-trade', async (req, res) => {
-  const { strategie, epic = 'GOLD', side, slPct = 1.0, rrr: testRrr = 2.0 } = req.body;
+  const { strategie, epic = 'GOLD', side, slPct = 1.0, rrr: testRrr = 2.0, bypass = false } = req.body;
   if (!strategie || !STRATEGY_IDS.includes(strategie))
     return res.status(400).json({ error: 'Ungültige Strategie: ' + strategie });
   try {
@@ -1712,7 +1712,7 @@ app.post('/api/test-trade', async (req, res) => {
     // Fire through handleWebhook directly (avoids internal HTTP loopback issues)
     const mockResult = await new Promise((resolve) => {
       const mockReq = {
-        body: { epic, side: sigSide, sl, tp },
+        body: { epic, side: sigSide, sl, tp, _bypassFilters: bypass },
         headers: { 'x-webhook-secret': process.env.WEBHOOK_SECRET || '' },
         ip: '127.0.0.1',
         query: {},
