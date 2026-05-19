@@ -3407,6 +3407,99 @@ function ReplayScreen() {
 }
 
 // ─── Scanner Screen (HELIX Phase 3) ───────────────────────────────────────
+function TestTradePanel() {
+  const D = window.BOT_DATA;
+  const bots = (D && D.bots) ? D.bots.map(b => b.name || b.codename) : [];
+  const EPICS_FLAT = ['GOLD','EURUSD','GBPUSD','USDJPY','US500','US100','BITCOIN','ETHEREUM','SILVER','OIL_CRUDE','DE40','AUDUSD','USDCAD'];
+  const [form, setForm] = useState({
+    strategie: bots[0] || '',
+    epic: 'GOLD',
+    side: 'AUTO',
+    slPct: '1.0',
+    rrr: '2.0',
+  });
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const fire = async () => {
+    if (!form.strategie) return;
+    setLoading(true);
+    setResult(null);
+    try {
+      const body = { strategie: form.strategie, epic: form.epic, slPct: form.slPct, rrr: form.rrr };
+      if (form.side !== 'AUTO') body.side = form.side;
+      const r = await fetch('/api/test-trade', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body),
+      });
+      const d = await r.json();
+      setResult({ ok: r.ok, ...d });
+    } catch (e) {
+      setResult({ ok: false, error: e.message });
+    }
+    setLoading(false);
+  };
+
+  const res = result?.result || {};
+  const statusColor = !result ? null : result.ok && (res.status === 'ok' || res.dealId) ? 'var(--pos)' : 'var(--text-faint)';
+
+  return /*#__PURE__*/React.createElement("div", {style: {display: 'flex', flexDirection: 'column', gap: 10}},
+    /*#__PURE__*/React.createElement("div", {className: "sc-form", style: {flexWrap: 'wrap'}},
+      /*#__PURE__*/React.createElement("select", {
+        value: form.strategie,
+        onChange: e => setForm(f => ({...f, strategie: e.target.value}))
+      }, bots.map(b => /*#__PURE__*/React.createElement("option", {key: b, value: b}, b))),
+      /*#__PURE__*/React.createElement("select", {
+        value: form.epic,
+        style: {minWidth: 120},
+        onChange: e => setForm(f => ({...f, epic: e.target.value}))
+      }, EPICS_FLAT.map(ep => /*#__PURE__*/React.createElement("option", {key: ep, value: ep}, ep))),
+      /*#__PURE__*/React.createElement("select", {
+        value: form.side,
+        onChange: e => setForm(f => ({...f, side: e.target.value}))
+      },
+        /*#__PURE__*/React.createElement("option", {value: 'AUTO'}, "Auto (Signal)"),
+        /*#__PURE__*/React.createElement("option", {value: 'BUY'}, "BUY"),
+        /*#__PURE__*/React.createElement("option", {value: 'SELL'}, "SELL")
+      ),
+      /*#__PURE__*/React.createElement("input", {
+        placeholder: "SL %", value: form.slPct, style: {width: 60},
+        onChange: e => setForm(f => ({...f, slPct: e.target.value}))
+      }),
+      /*#__PURE__*/React.createElement("input", {
+        placeholder: "RRR", value: form.rrr, style: {width: 55},
+        onChange: e => setForm(f => ({...f, rrr: e.target.value}))
+      }),
+      /*#__PURE__*/React.createElement("button", {
+        className: "tb-btn",
+        style: {background: loading ? 'var(--text-faint)' : '#e06c19', color: '#fff', border: 'none', fontWeight: 600},
+        disabled: loading || !form.strategie,
+        onClick: fire
+      }, loading ? "Feuert…" : "🚀 Fire")
+    ),
+    result && /*#__PURE__*/React.createElement("div", {
+      style: {fontSize: 12, padding: '8px 10px', background: 'var(--surface2)', borderRadius: 6, borderLeft: '3px solid ' + (statusColor || 'var(--text-faint)')}
+    },
+      result.ok
+        ? /*#__PURE__*/React.createElement("div", {style: {display: 'flex', flexDirection: 'column', gap: 4}},
+            /*#__PURE__*/React.createElement("div", null,
+              /*#__PURE__*/React.createElement("b", null, result.epic, " ", result.side), " | Entry ~", result.entry,
+              " | SL: ", result.sl, " | TP: ", result.tp
+            ),
+            /*#__PURE__*/React.createElement("div", {className: "faint"}, result.grund),
+            /*#__PURE__*/React.createElement("div", {style: {marginTop: 2}},
+              "Result: ",
+              /*#__PURE__*/React.createElement("b", {style: {color: statusColor}},
+                res.status || res.grund || JSON.stringify(res).slice(0, 80)
+              )
+            )
+          )
+        : /*#__PURE__*/React.createElement("div", {style: {color: 'var(--neg)'}}, "❌ ", result.error || "Fehler")
+    )
+  );
+}
+
 function ScannerScreen() {
   const [status, setStatus] = useState(null);
   const [form, setForm] = useState({
@@ -3611,7 +3704,17 @@ function ScannerScreen() {
       color: '#fff',
       border: 'none'
     }
-  }, "+ Add")), msg && /*#__PURE__*/React.createElement("div", {
+  }, "+ Add")), /*#__PURE__*/React.createElement("div", {
+    className: "card",
+    style: {marginTop: 'var(--pad)'}
+  }, /*#__PURE__*/React.createElement("div", {
+    className: "card-head"
+  }, /*#__PURE__*/React.createElement("span", {
+    className: "card-title"
+  }, "🧪 Test Trade"), /*#__PURE__*/React.createElement("span", {
+    className: "faint",
+    style: {fontSize: 11}
+  }, "Feuert ein Signal durch die gesamte Pipeline (Risk · ML · Broker)")), /*#__PURE__*/React.createElement(TestTradePanel, null)), msg && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       marginTop: 6,

@@ -42,7 +42,7 @@ const { bus, STREAMS, EVENT_TYPES } = require('./eventbus');
 const { RiskEngine } = require('./risk_engine');
 const { aggregateAgents } = require('./agents');
 const { breakers, dedup, metrics, validator } = require('./hardening');
-const { SignalGenerator, MultiAssetScanner } = require('./signal_generator');
+const { SignalGenerator, MultiAssetScanner, detectSignal } = require('./signal_generator');
 const { createBroker } = require('./broker');
 const { ReplayEngine, createReplayRouter } = require('./replay');
 const { startSnapshotLoop, reconcileOnStartup, deduplicator } = require('./recovery');
@@ -1643,6 +1643,74 @@ app.delete('/api/scanner/instruments/:epic', (req, res) => {
   const removed = sigGen.removeInstrument(req.params.epic);
   if (!removed) return res.status(404).json({ error: `Instrument nicht gefunden: ${req.params.epic}` });
   res.json({ ok: true, msg: `${req.params.epic} entfernt`, status: sigGen.status() });
+});
+
+// ── Test Trade ──────────────────────────────────────────────────────────────
+// POST /api/test-trade { strategie, epic, side?, slPct?, rrr? }
+// Fetches real candles, tries detectSignal, falls back to forced signal, fires webhook.
+app.post('/api/test-trade', async (req, res) => {
+  const { strategie, epic = 'GOLD', side, slPct = 1.0, rrr: testRrr = 2.0 } = req.body;
+  if (!strategie || !STRATEGY_IDS.includes(strategie))
+    return res.status(400).json({ error: 'Ungültige Strategie: ' + strategie });
+  try {
+    await ensureAuth(strategie);
+    const hdrs = getCapitalHeaders();
+
+    // Fetch candles for signal detection
+    let candles = [];
+    try {
+      const priceResp = await axios.get(BASE_URL + '/prices/' + epic, {
+        headers: hdrs,
+        params: { resolution: 'MINUTE_5', max: 100 },
+        timeout: 15000,
+      });
+      candles = priceResp.data?.prices || [];
+    } catch (e) {
+      addLog('warn', `[TestTrade] Kerzen-Fehler für ${epic}: ${e.message}`);
+    }
+
+    let sl, tp, entry, sigSide, grund;
+
+    // Try real signal detection if no side forced and enough candles
+    if (candles.length >= 55 && !side) {
+      const sig = detectSignal(candles, parseFloat(testRrr), 1.5);
+      if (sig.side) {
+        sl = sig.sl; tp = sig.tp; entry = sig.entry;
+        sigSide = sig.side; grund = sig.grund;
+      }
+    }
+
+    // Fallback: forced signal with % SL/TP
+    if (!sigSide) {
+      const last = candles[candles.length - 1];
+      entry = parseFloat((last?.closePrice?.bid || last?.close || 1000).toFixed(4));
+      sigSide = side || 'BUY';
+      const dist = entry * (parseFloat(slPct) / 100);
+      sl = sigSide === 'BUY'
+        ? parseFloat((entry - dist).toFixed(4))
+        : parseFloat((entry + dist).toFixed(4));
+      tp = sigSide === 'BUY'
+        ? parseFloat((entry + dist * parseFloat(testRrr)).toFixed(4))
+        : parseFloat((entry - dist * parseFloat(testRrr)).toFixed(4));
+      grund = `Erzwungenes Test-Signal (${slPct}% SL, RRR ${testRrr})`;
+    }
+
+    addLog('info', `🧪 Test-Trade: ${strategie} | ${epic} ${sigSide} | Entry ~${entry} | SL: ${sl} | TP: ${tp}`);
+
+    // Fire through webhook (full pipeline: Risk, ML, Broker)
+    const secret = process.env.WEBHOOK_SECRET || '';
+    const whResp = await axios.post(
+      `http://localhost:${PORT}/webhook/${strategie}`,
+      { epic, side: sigSide, sl, tp },
+      { headers: { 'content-type': 'application/json', 'x-webhook-secret': secret }, timeout: 30000 }
+    );
+
+    res.json({ ok: true, epic, side: sigSide, entry, sl, tp, grund, result: whResp.data });
+  } catch (err) {
+    const msg = err.response?.data?.error || err.message;
+    addLog('warn', `[TestTrade] Fehler: ${msg}`);
+    res.status(err.response?.status || 500).json({ error: msg });
+  }
 });
 
 // ── Audit Trail ─────────────────────────────────────────────────────────────────────────────────────────
