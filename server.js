@@ -942,6 +942,18 @@ async function handleWebhook(req, res, name) {
     const { side, sl, tp, epic = 'GOLD' } = req.body;
     if (!side || !sl || !tp) return res.status(400).json({ error: 'Fehlende Felder (side/sl/tp)' });
 
+    // Parsed signal values — Capital.com used to fetch live price for entry;
+    // with IBKR we estimate entry from sl/tp/rrr (broker executes at market price)
+    const slF  = parseFloat(sl);
+    const tpF  = parseFloat(tp);
+    const rrr  = s?.rrr || 2.0;
+    // entry = sl + (tp-sl)/(1+rrr) for BUY, reverse for SELL
+    const entry = side === 'BUY'
+      ? parseFloat((slF + (tpF - slF) / (1 + rrr)).toFixed(5))
+      : parseFloat((slF - (slF - tpF) / (1 + rrr)).toFixed(5));
+    const slDist = Math.abs(entry - slF);
+    const extras = { entry, slF, tpF };
+
     // Signal für späteren Backtest-Replay loggen
     const _sig = { ts: Date.now(), strategie: name, epic, side, sl, tp };
     try { fs.appendFileSync(SIGNALS_PATH, JSON.stringify(_sig) + '\n'); } catch {}
@@ -1090,7 +1102,7 @@ async function handleWebhook(req, res, name) {
 
     const order = {
       symbol:        epic,                         // instrument from signal payload
-      assetClass:    body.assetClass || 'commodity', // from signal or default
+      assetClass:    req.body.assetClass || 'commodity', // from signal or default
       side,
       size,
       orderType:     'MKT',
