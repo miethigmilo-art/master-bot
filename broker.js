@@ -124,7 +124,29 @@ class IBKRAdapter extends BrokerAdapter {
       ({ IBApi, EventName, OrderAction, OrderType, SecType } = require('@stoqey/ib'));
     } catch (e) {
       console.error('[IBKR] @stoqey/ib not installed. Run: npm install @stoqey/ib');
-      conM¥±”¹•ÉÉ½È m%	-It…±±¥¹œ‰…¬Ñ¼Á…Á•Èµ½‘”‰•¡…Ù¥½ÕÈÕ¹Ñ¥°¥¹ÍÑ…±±•¸œ¤ì(€€€€€Ñ¡¥Ì¹}É•½É‘ÉÉ½È µ½‘Õ±•}µ¥ÍÍ¥¹œèÍÑ½Å•ä½¥ˆƒŠPÉÕ¸¹Á´¥¹ÍÑ…±°ÍÑ½Å•ä½¥ˆœ¤ì(€€€€€É•ÑÕÉ¸ì(€€€ô((€€€Ñ¡¥Ì¹}%	¹ÕµÌ€ôì=É‘•ÉÑ¥½¸°=É‘•ÉQåÁ”°M•QåÁ”ôì((€€€½¹ÍÐ¥ˆ€ô¹•Ü%	Á¤¡ì¡½ÍÐèÑ¡¥Ì¹}¡½ÍÐ°Á½ÉÐèÑ¡¥Ì¹}Á½ÉÐ°±¥•¹Ñ%èÑ¡¥Ì¹}±¥•¹Ñ%ô¤ì(€€€Ñ¡¥Ì¹}¥ˆ€ô¥ˆì((€€€¥ˆ¹½¸¡Ù•¹Ñ9…µ”¹½¹¹•Ñ•°€ ¤€ôøì(€€€€€Ñ¡¥Ì¹}½¹¹•Ñ•€ôÑÉÕ”ì(€€€€€Ñ¡¥Ì¹}É•½¹¹•Ñ•±…ä€ô€ÈÀÀÀì(€€€€€½¹Í½±”¹±½œ¡m%	-It½¹¹•Ñ•ƒŠH€‘íÑ¡¥Ì¹}¡½ÍÑôè‘íÑ¡¥Ì¹}Á½ÉÑõ€¤ì(€€€€€Ñ¡¥Ì¹•µ¥Ð ‰É½­•É}•Ù•¹Ðœ°ìÑåÁ”è€½¹¹•Ñ•œ°…‘…ÁÑ•Èè€¥‰­Èœ°ÑÌè¹•Ü…Ñ” ¤¹Ñ½%M=MÑÉ¥¹œ ¤ô¤ì(€€€€€¥ˆ¹É•Å%‘Ì Ä¤ì(€€€€€¥ˆ¹É•ÅA½Í¥Ñ¥½¹Ì ¤ì(€€€€€¥˜€¡Ñ¡¥Ì¹}…½Õ¹Ð¤(€€€€€€€¥ˆ¹É•Å½Õ¹ÑMÕµµ…Éä Ä°€±°œ°€Q½Ñ…±…Í¡Y…±Õ”±9•Ñ1¥ÅÕ¥‘…Ñ¥½¸±Ù…¥±…‰±•Õ¹‘Ìœ¤ì(€€€ô¤ì((€€€¥ˆ¹½¸¡Ù•¹Ñ9…µ”¹‘¥Í½¹¹•Ñ•°€ ¤€ôøì(€€€€€Ñ¡¥Ì¹}½¹¹•Ñ•€= false;
+      console.error('[IBKR] Falling back to paper mode behaviour until installed.');
+      this._recordError('module_missing: @stoqey/ib â€” run npm install @stoqey/ib');
+      return;
+    }
+
+    this._IBEnums = { OrderAction, OrderType, SecType };
+
+    const ib = new IBApi({ host: this._host, port: this._port, clientId: this._clientId });
+    this._ib = ib;
+
+    ib.on(EventName.connected, () => {
+      this._connected = true;
+      this._reconnectDelay = 2000;
+      console.log(`[IBKR] Connected â†’ ${this._host}:${this._port}`);
+      this.emit('broker_event', { type: 'connected', adapter: 'ibkr', ts: new Date().toISOString() });
+      ib.reqIds(1);
+      ib.reqPositions();
+      if (this._account)
+        ib.reqAccountSummary(1, 'All', 'TotalCashValue,NetLiquidation,AvailableFunds');
+    });
+
+    ib.on(EventName.disconnected, () => {
+      this._connected = false;
       console.warn('[IBKR] Disconnected â€” scheduling reconnect');
       this.emit('broker_event', { type: 'reconnect', adapter: 'ibkr', ts: new Date().toISOString() });
       this._scheduleReconnect();
