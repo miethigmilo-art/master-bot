@@ -2936,7 +2936,7 @@ function SystemHealthScreen({
     count: sigGen?.signalsGenerated || 0,
     cat: 'signals'
   }, {
-    name: 'Broker (IBKR)',
+    name: 'Broker (Capital.com)',
     status: brokerHealth == null ? 'unknown' : brokerHealth.connected ? 'ok' : 'error',
     latency: brokerHealth?.latencyMs || 0,
     count: brokerHealth?.reconnects || 0,
@@ -3210,15 +3210,15 @@ function SystemHealthScreen({
     className: "card-head"
   }, /*#__PURE__*/React.createElement("span", {
     className: "card-title"
-  }, "Broker — IBKR"), /*#__PURE__*/React.createElement("span", {
+  }, "Broker — Capital.com"), /*#__PURE__*/React.createElement("span", {
     className: `tag ${brokerHealth.connected ? 'long' : 'short'}`
   }, brokerHealth.connected ? 'CONNECTED' : 'DISCONNECTED')), /*#__PURE__*/React.createElement("div", {
     className: "sh-res-grid"
   }, [
-    ['Account', brokerHealth.account || '—'],
+    ['Email', brokerHealth.email || '—'],
     ['Balance', brokerHealth.balance > 0 ? '$' + brokerHealth.balance.toLocaleString('en-US', {maximumFractionDigits: 0}) : '—'],
-    ['Positions', String(brokerHealth.positions || 0)],
-    ['Open Orders', String(brokerHealth.openOrders || 0)],
+    ['Session', brokerHealth.hasSession ? 'Active ✓' : 'None'],
+    ['Expires In', brokerHealth.sessionExpiresIn || '—'],
     ['Reconnects', String(brokerHealth.reconnects || 0)],
     ['Errors', String(brokerHealth.errors || 0)],
     ['Last Error', brokerHealth.lastError ? brokerHealth.lastError.msg + ' @ ' + fmtTime(brokerHealth.lastError.ts) : 'None'],

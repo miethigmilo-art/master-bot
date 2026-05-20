@@ -64,7 +64,7 @@ function saveSettings() {
 
 // ── Strategy Registry ────────────────────────────────
 // Strategies are defined by SETTINGS keys — no per-account credentials.
-// A single broker account (IBKR) is orchestrated centrally.
+// A single broker account (Capital.com) is orchestrated centrally.
 // Set BROKER_ADAPTER=paper for simulation mode.
 const STRATEGY_IDS = Object.keys(SETTINGS);
 
@@ -222,12 +222,12 @@ bus.subscribe('*', function(event) {
 });
 
 // ── Broker Auth ──────────────────────────────────────
-// Auth is handled inside broker adapter (IBKRAdapter/PaperAdapter).
+// Auth is handled inside broker adapter (CapitalComAdapter/PaperAdapter).
 async function ensureAuth(_name) { /* no-op — adapter manages connection */ }
 
 // ── Capital.com Market Data Session ──────────────────
 // Used by the Signal Generator to fetch historical price data.
-// Order execution goes through IBKR; only market data comes from Capital.com.
+// Order execution goes through Capital.com (CapitalComAdapter).
 const _capSession = {
   cst:       null,
   secToken:  null,
@@ -273,7 +273,7 @@ async function getEquity(name) {
 
 async function getPositions(name) {
   const positions = await broker.getPositions(name).catch(() => []);
-  // Filter to positions tagged with this strategyId (IBKR doesn't tag — return all)
+  // Filter to positions tagged with this strategyId (Capital.com — return all)
   return positions;
 }
 
@@ -955,7 +955,7 @@ async function handleWebhook(req, res, name) {
     if (!side || !sl || !tp) return res.status(400).json({ error: 'Fehlende Felder (side/sl/tp)' });
 
     // Parsed signal values — Capital.com used to fetch live price for entry;
-    // with IBKR we estimate entry from sl/tp/rrr (broker executes at market price)
+    // estimate entry from sl/tp/rrr (broker executes at market price)
     const slF  = parseFloat(sl);
     const tpF  = parseFloat(tp);
     const rrr  = s?.rrr || 2.0;
@@ -1456,7 +1456,7 @@ app.get('/api/strategy-scores', (req, res) => {
 app.post('/api/backtest/run', async (req, res) => {
   const { epic = 'GOLD', resolution = 'HOUR', count = 500, ema_schnell = 9, ema_langsam = 21, slPct = 0.5, rrr = 2.0 } = req.body;
   let name = null;
-  for (const n of STRATEGY_IDS) { if (false  /* IBKR: no per-account sessions */) { name = n; break; } }
+  for (const n of STRATEGY_IDS) { if (false  /* Capital.com: no per-account sessions */) { name = n; break; } }
   if (!name) return res.status(503).json({ error: 'Kein aktives Konto' });
   try {
     addLog('info', `Backtest: ${epic} ${resolution} (${count} Kerzen, EMA${ema_schnell}/${ema_langsam})`);
