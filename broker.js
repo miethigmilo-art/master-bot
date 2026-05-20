@@ -549,19 +549,64 @@ class CapitalComAdapter extends BrokerAdapter {
     this._balance      = 0;
     this._sessionTimer = null;
 
+    // Rate limiter: max 4 requests/second to Capital.com demo API
+    this._reqQueue      = [];
+    this._lastReqAt     = 0;
+    this._reqIntervalMs = 250;   // 250ms between requests = 4/s
+
     this._connect().catch(err => {
       console.error('[Capital.com] Initial connect failed:', err.message);
       this._recordError(err.message);
     });
   }
 
+  // Throttled request — all axios calls go through here
+  _req(fn) {
+    return new Promise((resolve, reject) => {
+      this._reqQueue.push({ fn, resolve, reject });
+      this._drainQueue();
+    });
+  }
+
+  _drainQueue() {
+    if (!this._reqQueue.length) return;
+    const now  = Date.now();
+    const wait = Math.max(0, this._lastReqAt + this._reqIntervalMs - now);
+    setTimeout(async () => {
+      if (!this._reqQueue.length) return;
+      const { fn, resolve, reject } = this._reqQueue.shift();
+      this._lastReqAt = Date.now();
+      try { resolve(await fn()); } catch (e) { reject(e); }
+      this._drainQueue();
+    }, wait);
+  }
+
+  // Retry on 429 with exponential backoff (1.5s, 3s, 6s)
+  async _withRetry(fn, retries = 3) {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        return await fn();
+      } catch (err) {
+        const status = err.response?.status;
+        const code   = err.response?.data?.errorCode || '';
+        if ((status === 429 || code.includes('too-many') || code.includes('rate')) && attempt < retries) {
+          const delay = 1500 * Math.pow(2, attempt);
+          console.warn(`[Capital.com] Rate limited — retry ${attempt + 1}/${retries} in ${delay}ms`);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+        throw err;
+      }
+    }
+  }
+
   async _connect() {
     const axios = require('axios');
-    const res = await axios.post(
+    const res = await this._req(() => axios.post(
       `${this._baseUrl}/session`,
       { identifier: this._email, password: this._password },
       { headers: { 'X-CAP-API-KEY': this._apiKey, 'Content-Type': 'application/json' } },
-    );
+    ));
     this._cst         = res.headers['cst'];
     this._secToken    = res.headers['x-security-token'];
     this._tokenExpiry = Date.now() + 9 * 60 * 1000;
@@ -591,7 +636,9 @@ class CapitalComAdapter extends BrokerAdapter {
     if (order.profitLevel) body.profitLevel = order.profitLevel;
     let res;
     try {
-      res = await axios.post(`${this._baseUrl}/positions`, body, { headers });
+      res = await this._withRetry(() =>
+        this._req(() => axios.post(`${this._baseUrl}/positions`, body, { headers }))
+      );
     } catch (err) {
       const msg = err.response?.data?.errorCode || err.response?.data?.message || err.message;
       this._recordError(msg);
@@ -612,7 +659,7 @@ class CapitalComAdapter extends BrokerAdapter {
     const axios = require('axios');
     const headers = await this._headers();
     try {
-      await axios.delete(`${this._baseUrl}/positions/${dealId}`, { headers });
+      await this._req(() => axios.delete(`${this._baseUrl}/positions/${dealId}`, { headers }));
     } catch (err) {
       const msg = err.response?.data?.errorCode || err.message;
       this._recordError(msg);
@@ -629,7 +676,7 @@ class CapitalComAdapter extends BrokerAdapter {
     if (updates.profitLevel != null) body.profitLevel = updates.profitLevel;
     if (updates.size        != null) body.size        = updates.size;
     try {
-      await axios.put(`${this._baseUrl}/positions/${dealId}`, body, { headers });
+      await this._req(() => axios.put(`${this._baseUrl}/positions/${dealId}`, body, { headers }));
     } catch (err) {
       const msg = err.response?.data?.errorCode || err.message;
       this._recordError(msg);
@@ -642,7 +689,7 @@ class CapitalComAdapter extends BrokerAdapter {
     const axios = require('axios');
     try {
       const headers = await this._headers();
-      const res = await axios.get(`${this._baseUrl}/positions`, { headers });
+      const res = await this._req(() => axios.get(`${this._baseUrl}/positions`, { headers }));
       return (res.data?.positions || []).map(p => ({
         symbol: p.market?.epic, side: p.position?.direction, size: p.position?.size,
         avgPrice: p.position?.openLevel, unrealisedPnl: p.position?.upl,
@@ -655,7 +702,7 @@ class CapitalComAdapter extends BrokerAdapter {
     const axios = require('axios');
     try {
       const headers = await this._headers();
-      const res = await axios.get(`${this._baseUrl}/accounts`, { headers });
+      const res = await this._req(() => axios.get(`${this._baseUrl}/accounts`, { headers }));
       const acct = (res.data?.accounts || [])[0];
       this._balance = acct?.balance?.available ?? acct?.balance?.balance ?? 0;
       return this._balance;
@@ -664,14 +711,15 @@ class CapitalComAdapter extends BrokerAdapter {
 
   streamPrices(symbol, assetClass, callback) {
     const axios = require('axios');
+    const priceInterval = parseInt(process.env.CAPITAL_PRICE_INTERVAL || '8000', 10);
     const iv = setInterval(async () => {
       try {
         const headers = await this._headers();
-        const res = await axios.get(`${this._baseUrl}/markets/${symbol}`, { headers });
+        const res = await this._req(() => axios.get(`${this._baseUrl}/markets/${symbol}`, { headers }));
         const snap = res.data?.snapshot;
         if (snap) callback({ symbol, bid: snap.bid, ask: snap.offer, last: ((snap.bid||0)+(snap.offer||0))/2, ts: Date.now() });
       } catch {}
-    }, 2000);
+    }, priceInterval);
     return () => clearInterval(iv);
   }
 
