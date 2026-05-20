@@ -749,8 +749,15 @@ class CapitalComAdapter extends BrokerAdapter {
     try {
       const headers = await this._headers();
       const res = await this._req(() => axios.get(`${this._baseUrl}/accounts`, { headers }));
-      const acct = (res.data?.accounts || [])[0];
-      this._balance = acct?.balance?.available ?? acct?.balance?.balance ?? 0;
+      const accounts = res.data?.accounts || [];
+      // Prefer the account marked as preferred; fall back to first
+      const acct = accounts.find(a => a.preferred) || accounts[0];
+      const bal = acct?.balance;
+      // Capital.com returns: { balance, deposit, profitLoss, available }
+      // Use 'balance' (total) as the canonical balance, fall back to available
+      this._balance = parseFloat(bal?.balance ?? bal?.available ?? 0);
+      this._accountId = acct?.accountId;
+      console.log(`[Capital.com] Account: ${acct?.accountName} (${acct?.accountType}) — balance: ${this._balance}`);
       return this._balance;
     } catch (e) { this._recordError(e.message); return this._balance; }
   }
