@@ -124,29 +124,7 @@ class IBKRAdapter extends BrokerAdapter {
       ({ IBApi, EventName, OrderAction, OrderType, SecType } = require('@stoqey/ib'));
     } catch (e) {
       console.error('[IBKR] @stoqey/ib not installed. Run: npm install @stoqey/ib');
-      console.error('[IBKR] Falling back to paper mode behaviour until installed.');
-      this._recordError('module_missing: @stoqey/ib â€” run npm install @stoqey/ib');
-      return;
-    }
-
-    this._IBEnums = { OrderAction, OrderType, SecType };
-
-    const ib = new IBApi({ host: this._host, port: this._port, clientId: this._clientId });
-    this._ib = ib;
-
-    ib.on(EventName.connected, () => {
-      this._connected = true;
-      this._reconnectDelay = 2000;
-      console.log(`[IBKR] Connected â†’ ${this._host}:${this._port}`);
-      this.emit('broker_event', { type: 'connected', adapter: 'ibkr', ts: new Date().toISOString() });
-      ib.reqIds(1);
-      ib.reqPositions();
-      if (this._account)
-        ib.reqAccountSummary(1, 'All', 'TotalCashValue,NetLiquidation,AvailableFunds');
-    });
-
-    ib.on(EventName.disconnected, () => {
-      this._connected = false;
+      conM¥±”¹•ÉÉ½È m%	-It…±±¥¹œ‰…¬Ñ¼Á…Á•Èµ½‘”‰•¡…Ù¥½ÕÈÕ¹Ñ¥°¥¹ÍÑ…±±•¸œ¤ì(€€€€€Ñ¡¥Ì¹}É•½É‘ÉÉ½È µ½‘Õ±•}µ¥ÍÍ¥¹œèÍÑ½Å•ä½¥ˆƒŠPÉÕ¸¹Á´¥¹ÍÑ…±°ÍÑ½Å•ä½¥ˆœ¤ì(€€€€€É•ÑÕÉ¸ì(€€€ô((€€€Ñ¡¥Ì¹}%	¹ÕµÌ€ôì=É‘•ÉÑ¥½¸°=É‘•ÉQåÁ”°M•QåÁ”ôì((€€€½¹ÍÐ¥ˆ€ô¹•Ü%	Á¤¡ì¡½ÍÐèÑ¡¥Ì¹}¡½ÍÐ°Á½ÉÐèÑ¡¥Ì¹}Á½ÉÐ°±¥•¹Ñ%èÑ¡¥Ì¹}±¥•¹Ñ%ô¤ì(€€€Ñ¡¥Ì¹}¥ˆ€ô¥ˆì((€€€¥ˆ¹½¸¡Ù•¹Ñ9…µ”¹½¹¹•Ñ•°€ ¤€ôøì(€€€€€Ñ¡¥Ì¹}½¹¹•Ñ•€ôÑÉÕ”ì(€€€€€Ñ¡¥Ì¹}É•½¹¹•Ñ•±…ä€ô€ÈÀÀÀì(€€€€€½¹Í½±”¹±½œ¡m%	-It½¹¹•Ñ•ƒŠH€‘íÑ¡¥Ì¹}¡½ÍÑôè‘íÑ¡¥Ì¹}Á½ÉÑõ€¤ì(€€€€€Ñ¡¥Ì¹•µ¥Ð ‰É½­•É}•Ù•¹Ðœ°ìÑåÁ”è€½¹¹•Ñ•œ°…‘…ÁÑ•Èè€¥‰­Èœ°ÑÌè¹•Ü…Ñ” ¤¹Ñ½%M=MÑÉ¥¹œ ¤ô¤ì(€€€€€¥ˆ¹É•Å%‘Ì Ä¤ì(€€€€€¥ˆ¹É•ÅA½Í¥Ñ¥½¹Ì ¤ì(€€€€€¥˜€¡Ñ¡¥Ì¹}…½Õ¹Ð¤(€€€€€€€¥ˆ¹É•Å½Õ¹ÑMÕµµ…Éä Ä°€±°œ°€Q½Ñ…±…Í¡Y…±Õ”±9•Ñ1¥ÅÕ¥‘…Ñ¥½¸±Ù…¥±…‰±•Õ¹‘Ìœ¤ì(€€€ô¤ì((€€€¥ˆ¹½¸¡Ù•¹Ñ9…µ”¹‘¥Í½¹¹•Ñ•°€ ¤€ôøì(€€€€€Ñ¡¥Ì¹}½¹¹•Ñ•€= false;
       console.warn('[IBKR] Disconnected â€” scheduling reconnect');
       this.emit('broker_event', { type: 'reconnect', adapter: 'ibkr', ts: new Date().toISOString() });
       this._scheduleReconnect();
@@ -525,16 +503,192 @@ class AlpacaAdapter extends BrokerAdapter {
 
 
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Capital.com Adapter  (REST API â€” demo + live)
+//
+// Required env vars:
+//   BASE_URL    â€” e.g. https://demo-api-capital.backend-capital.com/api/v1
+//   API_KEY     â€” X-CAP-API-KEY (shown in Capital.com dashboard)
+//   API_SECRET  â€” account password used to create session
+//   EMAIL       â€” Capital.com account e-mail
+//
+// Optional:
+//   BROKER_ADAPTER=capital   (set this in Railway to activate)
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+class CapitalComAdapter extends BrokerAdapter {
+  constructor() {
+    super('capital');
+    this._baseUrl      = (process.env.BASE_URL || 'https://api-capital.backend-capital.com/api/v1').replace(/\/$/, '');
+    this._apiKey       = process.env.API_KEY    || '';
+    this._password     = process.env.API_SECRET || '';
+    this._email        = process.env.EMAIL      || '';
+    this._cst          = null;
+    this._secToken     = null;
+    this._tokenExpiry  = 0;
+    this._balance      = 0;
+    this._sessionTimer = null;
+
+    this._connect().catch(err => {
+      console.error('[Capital.com] Initial connect failed:', err.message);
+      this._recordError(err.message);
+    });
+  }
+
+  async _connect() {
+    const axios = require('axios');
+    const res = await axios.post(
+      `${this._baseUrl}/session`,
+      { identifier: this._email, password: this._password },
+      { headers: { 'X-CAP-API-KEY': this._apiKey, 'Content-Type': 'application/json' } },
+    );
+    this._cst         = res.headers['cst'];
+    this._secToken    = res.headers['x-security-token'];
+    this._tokenExpiry = Date.now() + 9 * 60 * 1000;
+    this._connected   = true;
+    console.log('[Capital.com] Session established');
+    this.emit('broker_event', { type: 'connected', adapter: 'capital', ts: new Date().toISOString() });
+    if (this._sessionTimer) clearTimeout(this._sessionTimer);
+    this._sessionTimer = setTimeout(
+      () => this._connect().catch(e => this._recordError(e.message)),
+      8 * 60 * 1000,
+    );
+  }
+
+  async _headers() {
+    if (!this._cst || Date.now() >= this._tokenExpiry) await this._connect();
+    return { 'CST': this._cst, 'X-SECURITY-TOKEN': this._secToken, 'Content-Type': 'application/json' };
+  }
+
+  async placeOrder(strategyId, order) {
+    const axios = require('axios');
+    const t0      = Date.now();
+    const headers = await this._headers();
+    const body = {
+      epic: order.symbol, direction: order.side, size: order.size, guaranteedStop: false,
+    };
+    if (order.stopLevel)   body.stopLevel   = order.stopLevel;
+    if (order.profitLevel) body.profitLevel = order.profitLevel;
+    let res;
+    try {
+      res = await axios.post(`${this._baseUrl}/positions`, body, { headers });
+    } catch (err) {
+      const msg = err.response?.data?.errorCode || err.response?.data?.message || err.message;
+      this._recordError(msg);
+      throw new Error(`Capital.com placeOrder failed: ${msg}`);
+    }
+    const dealRef = res.data?.dealReference;
+    const dealId  = res.data?.dealId || dealRef || `CAP-${Date.now()}`;
+    this._recordLatency(Date.now() - t0);
+    this.emit('broker_event', {
+      type: 'fill_received', adapter: 'capital', dealId, dealRef, strategyId,
+      correlationId: order.correlationId, symbol: order.symbol,
+      side: order.side, size: order.size, ts: new Date().toISOString(),
+    });
+    return { dealId, dealReference: dealRef, status: 'filled', filled: order.size };
+  }
+
+  async cancelOrder(strategyId, dealId) {
+    const axios = require('axios');
+    const headers = await this._headers();
+    try {
+      await axios.delete(`${this._baseUrl}/positions/${dealId}`, { headers });
+    } catch (err) {
+      const msg = err.response?.data?.errorCode || err.message;
+      this._recordError(msg);
+      throw new Error(`Capital.com cancelOrder failed: ${msg}`);
+    }
+    this.emit('broker_event', { type: 'order_cancelled', adapter: 'capital', dealId, strategyId, ts: new Date().toISOString() });
+  }
+
+  async modifyOrder(strategyId, dealId, updates) {
+    const axios = require('axios');
+    const headers = await this._headers();
+    const body = {};
+    if (updates.stopLevel   != null) body.stopLevel   = updates.stopLevel;
+    if (updates.profitLevel != null) body.profitLevel = updates.profitLevel;
+    if (updates.size        != null) body.size        = updates.size;
+    try {
+      await axios.put(`${this._baseUrl}/positions/${dealId}`, body, { headers });
+    } catch (err) {
+      const msg = err.response?.data?.errorCode || err.message;
+      this._recordError(msg);
+      throw new Error(`Capital.com modifyOrder failed: ${msg}`);
+    }
+    return { dealId, status: 'modified' };
+  }
+
+  async getPositions() {
+    const axios = require('axios');
+    try {
+      const headers = await this._headers();
+      const res = await axios.get(`${this._baseUrl}/positions`, { headers });
+      return (res.data?.positions || []).map(p => ({
+        symbol: p.market?.epic, side: p.position?.direction, size: p.position?.size,
+        avgPrice: p.position?.openLevel, unrealisedPnl: p.position?.upl,
+        dealId: p.position?.dealId, strategyId: null,
+      }));
+    } catch (e) { this._recordError(e.message); return []; }
+  }
+
+  async getBalance() {
+    const axios = require('axios');
+    try {
+      const headers = await this._headers();
+      const res = await axios.get(`${this._baseUrl}/accounts`, { headers });
+      const acct = (res.data?.accounts || [])[0];
+      this._balance = acct?.balance?.available ?? acct?.balance?.balance ?? 0;
+      return this._balance;
+    } catch (e) { this._recordError(e.message); return this._balance; }
+  }
+
+  streamPrices(symbol, assetClass, callback) {
+    const axios = require('axios');
+    const iv = setInterval(async () => {
+      try {
+        const headers = await this._headers();
+        const res = await axios.get(`${this._baseUrl}/markets/${symbol}`, { headers });
+        const snap = res.data?.snapshot;
+        if (snap) callback({ symbol, bid: snap.bid, ask: snap.offer, last: ((snap.bid||0)+(snap.offer||0))/2, ts: Date.now() });
+      } catch {}
+    }, 2000);
+    return () => clearInterval(iv);
+  }
+
+  streamOrders(callback) {
+    const h = ev => callback(ev);
+    this.on('broker_event', h);
+    return () => this.off('broker_event', h);
+  }
+
+  async reconnect() {
+    this._connected = false; this._cst = null; this._secToken = null; this._tokenExpiry = 0;
+    await this._connect();
+  }
+
+  async healthCheck() {
+    return {
+      ...this.health(),
+      baseUrl:          this._baseUrl,
+      email:            this._email,
+      hasSession:       !!this._cst,
+      sessionExpiresIn: this._tokenExpiry ? `${Math.max(0,Math.round((this._tokenExpiry-Date.now())/1000))}s` : 'n/a',
+      balance:          this._balance,
+    };
+  }
+}
+
+
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 // Factory
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function createBroker() {
   const adapter = (process.env.BROKER_ADAPTER || 'ibkr').toLowerCase();
   switch (adapter) {
-    case 'paper':  return new PaperBrokerAdapter();
-    case 'oanda':  return new OandaAdapter();
-    case 'alpaca': return new AlpacaAdapter();
+    case 'paper':   return new PaperBrokerAdapter();
+    case 'oanda':   return new OandaAdapter();
+    case 'alpaca':  return new AlpacaAdapter();
+    case 'capital': return new CapitalComAdapter();
     case 'ibkr':
-    default:       return new IBKRAdapter();
+    default:        return new IBKRAdapter();
   }
 }
 
@@ -545,4 +699,5 @@ module.exports = {
   PaperBrokerAdapter,
   OandaAdapter,
   AlpacaAdapter,
+  CapitalComAdapter,
 };
