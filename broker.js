@@ -576,14 +576,24 @@ class CapitalComAdapter extends BrokerAdapter {
   }
 
   // Normalize common symbol names to Capital.com epic format
+  // Capital.com uses its own epic names — NOT MT4/forex tickers
+  // GOLD stays GOLD, OIL_CRUDE for WTI, etc.
   _normalizeEpic(symbol) {
     const MAP = {
-      GOLD:   'XAUUSD',
-      SILVER: 'XAGUSD',
-      OIL:    'XTIUSD',
+      // Commodities: Capital.com uses plain names, NOT XAUUSD/XAGUSD
+      XAUUSD: 'GOLD',    // reverse-map if someone passes MT4 name
+      XAGUSD: 'SILVER',
+      XTIUSD: 'OIL_CRUDE',
+      WTI:    'OIL_CRUDE',
+      OIL:    'OIL_CRUDE',
+      BRENT:  'BRENT_CRUDE',
+      // Indices
       US500:  'US500',
       NAS100: 'NAS100',
-      BTCUSD: 'BCHUSD',
+      SPX500: 'US500',
+      // Crypto — Capital.com uses BTCUSD
+      BTC:    'BTCUSD',
+      BCHUSD: 'BTCUSD', // fix our old wrong mapping
     };
     const custom = process.env.CAPITAL_EPIC_MAP || '';
     if (custom) {
