@@ -562,10 +562,15 @@ class CapitalComAdapter extends BrokerAdapter {
     try {
       await this._connect();
     } catch (err) {
+      const status = err.response?.status;
       console.error(`[Capital.com] Initial connect failed (attempt ${attempt + 1}): ${err.message}`);
       this._recordError(err.message);
-      if (attempt < 3) {
-        setTimeout(() => this._startupConnect(attempt + 1), 3000 * (attempt + 1));
+      // 401 = bad credentials — do NOT retry (would trigger account lockout)
+      // Only retry on network errors or 5xx
+      if (attempt < 3 && status !== 401 && status !== 403) {
+        setTimeout(() => this._startupConnect(attempt + 1), 5000 * (attempt + 1));
+      } else if (status === 401) {
+        console.error('[Capital.com] 401 Unauthorized — check EMAIL, API_KEY, API_SECRET env vars. Not retrying.');
       }
     }
   }
