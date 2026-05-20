@@ -2125,4 +2125,11 @@ async function startServer() {
     sigGen.start();
     addLog('info', '[Scanner] Multi-Asset Scanner aktiv');
   } else {
-    addLog('info', '[Scanner] Sig
+    addLog('info', '[Scanner] Signal Scanner inaktiv (ENV: SIGNAL_GEN_ENABLED=false oder nicht gesetzt)');
+  }
+}
+
+startServer().catch(err => {
+  console.error('Startup-Fehler:', err);
+  process.exit(1);
+});
