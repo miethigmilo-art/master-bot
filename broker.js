@@ -554,10 +554,40 @@ class CapitalComAdapter extends BrokerAdapter {
     this._lastReqAt     = 0;
     this._reqIntervalMs = 250;   // 250ms between requests = 4/s
 
-    this._connect().catch(err => {
-      console.error('[Capital.com] Initial connect failed:', err.message);
+    // Retry startup connect up to 3 times (Capital.com demo occasionally 401s on first call)
+    this._startupConnect();
+  }
+
+  async _startupConnect(attempt = 0) {
+    try {
+      await this._connect();
+    } catch (err) {
+      console.error(`[Capital.com] Initial connect failed (attempt ${attempt + 1}): ${err.message}`);
       this._recordError(err.message);
-    });
+      if (attempt < 3) {
+        setTimeout(() => this._startupConnect(attempt + 1), 3000 * (attempt + 1));
+      }
+    }
+  }
+
+  // Normalize common symbol names to Capital.com epic format
+  _normalizeEpic(symbol) {
+    const MAP = {
+      GOLD:   'XAUUSD',
+      SILVER: 'XAGUSD',
+      OIL:    'XTIUSD',
+      US500:  'US500',
+      NAS100: 'NAS100',
+      BTCUSD: 'BCHUSD',
+    };
+    const custom = process.env.CAPITAL_EPIC_MAP || '';
+    if (custom) {
+      for (const pair of custom.split(',')) {
+        const [from, to] = pair.split('=').map(s => s.trim());
+        if (from && to && symbol.toUpperCase() === from.toUpperCase()) return to;
+      }
+    }
+    return MAP[symbol.toUpperCase()] || symbol;
   }
 
   // Throttled request — all axios calls go through here
@@ -602,11 +632,11 @@ class CapitalComAdapter extends BrokerAdapter {
 
   async _connect() {
     const axios = require('axios');
-    const res = await this._req(() => axios.post(
+    const res = await axios.post(
       `${this._baseUrl}/session`,
       { identifier: this._email, password: this._password },
       { headers: { 'X-CAP-API-KEY': this._apiKey, 'Content-Type': 'application/json' } },
-    ));
+    );
     this._cst         = res.headers['cst'];
     this._secToken    = res.headers['x-security-token'];
     this._tokenExpiry = Date.now() + 9 * 60 * 1000;
@@ -629,8 +659,9 @@ class CapitalComAdapter extends BrokerAdapter {
     const axios = require('axios');
     const t0      = Date.now();
     const headers = await this._headers();
+    const epic = this._normalizeEpic(order.symbol);
     const body = {
-      epic: order.symbol, direction: order.side, size: order.size, guaranteedStop: false,
+      epic, direction: order.side, size: order.size, guaranteedStop: false,
     };
     if (order.stopLevel)   body.stopLevel   = order.stopLevel;
     if (order.profitLevel) body.profitLevel = order.profitLevel;
