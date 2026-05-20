@@ -464,6 +464,16 @@ const SCORE_CFG = {
 // scorePauses[name] = { paused: bool, score: number|null, grund: string, geaendertAm: string }
 let scorePauses = loadJSON(SCORE_PATH, {});
 
+// ── Risk Engine (module-scope so it's ready before any webhook fires) ─────────
+const riskEngine = new RiskEngine(() => ({
+  settings:    SETTINGS,
+  performance,
+  marketMode,
+  marketModes: MARKET_MODES,
+  scorePauses,
+  tagesStart,
+}));
+
 function scoreBadge(score) {
   if (score === null || score === undefined) return '⚪';
   if (score >= 60) return '🟢';
@@ -2004,15 +2014,8 @@ async function startServer() {
     addLog('info', '📁 Kein DATABASE_URL — JSON-Fallback aktiv');
   }
 
-  const riskEngine = new RiskEngine(() => ({
-    settings: SETTINGS,
-    performance,
-    marketMode,
-    marketModes: MARKET_MODES,
-    scorePauses,
-    tagesStart,
-  }));
-  addLog('info', '⚙️ Risk Engine initialisiert (Event Bus aktiv)');
+  // riskEngine already instantiated at module scope (before routes)
+  addLog('info', '⚙️ Risk Engine aktiv (bereits bei Modulstart initialisiert)');
 
   // ── Phase 10: Snapshot + Recovery ────────────────────────────────────────
   const SNAPSHOT_PATH = path.join(DATA_DIR, 'snapshot.json');
@@ -2122,11 +2125,4 @@ async function startServer() {
     sigGen.start();
     addLog('info', '[Scanner] Multi-Asset Scanner aktiv');
   } else {
-    addLog('info', '[Scanner] Signal Scanner inaktiv (ENV: SIGNAL_GEN_ENABLED=false oder nicht gesetzt)');
-  }
-}
-
-startServer().catch(err => {
-  console.error('Startup-Fehler:', err);
-  process.exit(1);
-});
+    addLog('info', '[Scanner] Sig
