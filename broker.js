@@ -750,14 +750,26 @@ class CapitalComAdapter extends BrokerAdapter {
       const headers = await this._headers();
       const res = await this._req(() => axios.get(`${this._baseUrl}/accounts`, { headers }));
       const accounts = res.data?.accounts || [];
-      // Prefer the account marked as preferred; fall back to first
-      const acct = accounts.find(a => a.preferred) || accounts[0];
+
+      // Log ALL accounts so operator can identify the right one
+      accounts.forEach(a => {
+        const b = a.balance || {};
+        console.log(`[Capital.com] Account found: id=${a.accountId} name="${a.accountName}" type=${a.accountType} preferred=${a.preferred} balance=${b.balance} available=${b.available}`);
+      });
+
+      // Allow operator to pin a specific account via env var
+      const pinId = process.env.CAPITAL_ACCOUNT_ID;
+      let acct = pinId
+        ? accounts.find(a => a.accountId === pinId)
+        : (accounts.find(a => a.preferred) || accounts[0]);
+
+      if (!acct) acct = accounts[0];
+
       const bal = acct?.balance;
       // Capital.com returns: { balance, deposit, profitLoss, available }
-      // Use 'balance' (total) as the canonical balance, fall back to available
       this._balance = parseFloat(bal?.balance ?? bal?.available ?? 0);
       this._accountId = acct?.accountId;
-      console.log(`[Capital.com] Account: ${acct?.accountName} (${acct?.accountType}) — balance: ${this._balance}`);
+      console.log(`[Capital.com] Using account: "${acct?.accountName}" (${acct?.accountType}) id=${acct?.accountId} balance=${this._balance}`);
       return this._balance;
     } catch (e) { this._recordError(e.message); return this._balance; }
   }
