@@ -1200,10 +1200,15 @@ async function handleWebhook(req, res, name) {
 }
 
 // ── Webhook Routen ─────────────────────────────────────────────────
-['mittel','aggressiv','smart','konservativ','optimiert','test','adaptive','steady'].forEach(n => {
+// Aktive Strategien (dynamisch aus SETTINGS)
+STRATEGY_IDS.forEach(n => {
   app.post(`/webhook/${n}`, (req, res) => handleWebhook(req, res, n));
 });
-app.post('/webhook/goldglobe', (req, res) => handleWebhook(req, res, 'smart'));
+// Legacy-Namen für Backwards-Kompatibilität (TradingView-Webhooks etc.)
+['mittel','aggressiv','smart','konservativ','optimiert','test','adaptive','steady'].forEach(n => {
+  if (!STRATEGY_IDS.includes(n)) app.post(`/webhook/${n}`, (req, res) => handleWebhook(req, res, n));
+});
+app.post('/webhook/goldglobe', (req, res) => handleWebhook(req, res, STRATEGY_IDS[0] || 'stegosaurus'));
 // ── PnL-Webhook ───────────────────────────────────────────────────────────────
 // TradingView sendet diesen Webhook wenn ein Trade geschlossen wird.
 // Payload: { strategie, pnl, side, datum? }
