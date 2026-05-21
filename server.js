@@ -2135,6 +2135,8 @@ async function startServer() {
       atrSlFactor:  process.env.SIGNAL_GEN_ATR_SL || '1.5',
       intervalMs:   (parseInt(process.env.SIGNAL_GEN_INTERVAL || '60', 10)) * 1000,
       secret:       process.env.WEBHOOK_SECRET    || '',
+      // Pass all strategy IDs so epics are distributed across strategies (1 trade per strategy)
+      strategies:   STRATEGY_IDS,
       // Explicit instrument list (optional — falls back to env SIGNAL_SCAN_EPICS)
       instruments:  null,
     });

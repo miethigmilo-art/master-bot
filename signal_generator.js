@@ -72,7 +72,7 @@ function normalizeCandle(c) {
 }
 
 // ── Signal Detection ─────────────────────────────────────────
-// Erkennt EMA(20/50) Crossover mit ATR und RSI Filter
+// Erkennt Signale über 3 Methoden: EMA-Crossover, Trend-Continuation, RSI-Momentum
 // Gibt { side: 'BUY'|'SELL'|null, entry, sl, tp, grund } zurück
 function detectSignal(candles, rrr, atrSlFactor) {
   if (candles.length < 60) return { side: null, grund: 'Zu wenig Kerzen (' + candles.length + ')' };
@@ -80,73 +80,93 @@ function detectSignal(candles, rrr, atrSlFactor) {
   const norm   = candles.map(normalizeCandle);
   const closes = norm.map(function(c) { return c.close; });
 
-  // Aktuelle und vorherige EMA-Werte für Crossover-Erkennung
-  const closesNow  = closes;
-  const closesPrev = closes.slice(0, -1);
+  // EMA-Werte: aktuell + letzten 5 Kerzen für Crossover-Fenster
+  const ema20now  = ema(closes, 20);
+  const ema50now  = ema(closes, 50);
+  const ema20p1   = ema(closes.slice(0, -1), 20);
+  const ema50p1   = ema(closes.slice(0, -1), 50);
+  const ema20p3   = ema(closes.slice(0, -3), 20);
+  const ema50p3   = ema(closes.slice(0, -3), 50);
+  const ema20p5   = ema(closes.slice(0, -5), 20);
+  const ema50p5   = ema(closes.slice(0, -5), 50);
 
-  const ema20now  = ema(closesNow,  20);
-  const ema50now  = ema(closesNow,  50);
-  const ema20prev = ema(closesPrev, 20);
-  const ema50prev = ema(closesPrev, 50);
-
-  if (!ema20now || !ema50now || !ema20prev || !ema50prev) {
-    return { side: null, grund: 'EMA Berechnung fehlgeschlagen' };
-  }
+  if (!ema20now || !ema50now) return { side: null, grund: 'EMA Berechnung fehlgeschlagen' };
 
   const currentAtr = atr(candles, 14);
-  if (!currentAtr || currentAtr <= 0) {
-    return { side: null, grund: 'ATR Berechnung fehlgeschlagen' };
-  }
+  if (!currentAtr || currentAtr <= 0) return { side: null, grund: 'ATR Berechnung fehlgeschlagen' };
 
-  // ATR als Volatilitaets-Filter: mindestens 0.05% des Preises
-  const entry = closes[closes.length - 1];
+  // ATR-Filter: 0.005% Minimum — filtert nur tote, völlig flache Märkte heraus
+  const entry  = closes[closes.length - 1];
   const atrPct = currentAtr / entry * 100;
-  if (atrPct < 0.05) {
-    return { side: null, grund: 'ATR zu klein (' + atrPct.toFixed(3) + '%) — kein klarer Markt' };
+  if (atrPct < 0.005) {
+    return { side: null, grund: 'ATR zu klein (' + atrPct.toFixed(3) + '%) — Markt zu flach' };
   }
 
-  const rsiVal = rsi(closes, 14);
+  const rsiVal  = rsi(closes, 14);
+  const rsiPrev = rsi(closes.slice(0, -1), 14);
 
-  // EMA Crossover Erkennung
-  const crossBuy  = ema20prev <= ema50prev && ema20now > ema50now;  // EMA20 kreuzt EMA50 von unten
-  const crossSell = ema20prev >= ema50prev && ema20now < ema50now;  // EMA20 kreuzt EMA50 von oben
+  // ── Signal 1: EMA Crossover (letzten 5 Kerzen) ──────────────
+  const crossBuy  = (ema20p5 <= ema50p5 && ema20now > ema50now) ||
+                    (ema20p3 <= ema50p3 && ema20p1  > ema50p1);
+  const crossSell = (ema20p5 >= ema50p5 && ema20now < ema50now) ||
+                    (ema20p3 >= ema50p3 && ema20p1  < ema50p1);
 
-  // RSI Filter: kein Overbought bei BUY, kein Oversold bei SELL
-  if (crossBuy) {
-    if (rsiVal && rsiVal > 75) return { side: null, grund: 'BUY-Signal aber RSI overbought (' + rsiVal.toFixed(0) + ')' };
-    const sl = parseFloat((entry - currentAtr * atrSlFactor).toFixed(2));
-    const tp = parseFloat((entry + (entry - sl) * rrr).toFixed(2));
+  // ── Signal 2: Trend-Continuation (EMA-Richtung + RSI-Fenster) ─
+  // EMA20 klar über EMA50 UND RSI in gesundem Kaufbereich → BUY
+  const emaDeltaPct = Math.abs(ema20now - ema50now) / ema50now * 100;
+  const trendBuy  = ema20now > ema50now && emaDeltaPct >= 0.01 &&
+                    rsiVal && rsiVal >= 42 && rsiVal <= 63;
+  const trendSell = ema20now < ema50now && emaDeltaPct >= 0.01 &&
+                    rsiVal && rsiVal >= 37 && rsiVal <= 58;
+
+  // ── Signal 3: RSI-Momentum (RSI überquert 50 in beide Richtungen) ─
+  const rsiBuy  = rsiPrev && rsiVal && rsiPrev < 50 && rsiVal >= 50 && rsiVal < 68;
+  const rsiSell = rsiPrev && rsiVal && rsiPrev > 50 && rsiVal <= 50 && rsiVal > 32;
+
+  const signalBuy  = crossBuy  || trendBuy  || rsiBuy;
+  const signalSell = crossSell || trendSell || rsiSell;
+
+  // Beim Conflict (beide aktiv) → kein Trade
+  if (signalBuy && signalSell) {
+    return { side: null, grund: 'Widersprüchliche Signale — kein Trade' };
+  }
+
+  // Precision: 5 Dezimalstellen für Forex, 2 für Commodities/Indizes
+  const prec = entry < 100 ? 5 : 2;
+  const fmt  = (n) => parseFloat(n.toFixed(prec));
+
+  if (signalBuy) {
+    if (rsiVal && rsiVal > 72) return { side: null, grund: 'BUY geblockt — RSI overbought (' + rsiVal.toFixed(0) + ')' };
+    const sl = fmt(entry - currentAtr * atrSlFactor);
+    const tp = fmt(entry + (entry - sl) * rrr);
+    const typ = crossBuy ? 'EMA-Crossover' : trendBuy ? 'Trend-Continuation' : 'RSI-Momentum';
     return {
-      side:  'BUY',
-      entry: parseFloat(entry.toFixed(2)),
-      sl, tp,
-      atr:   parseFloat(currentAtr.toFixed(4)),
-      rsi:   rsiVal ? parseFloat(rsiVal.toFixed(1)) : null,
-      ema20: parseFloat(ema20now.toFixed(4)),
-      ema50: parseFloat(ema50now.toFixed(4)),
-      grund: 'EMA20(' + ema20now.toFixed(2) + ') kreuzt EMA50(' + ema50now.toFixed(2) + ') aufwaerts',
+      side: 'BUY', entry: fmt(entry), sl, tp,
+      atr: parseFloat(currentAtr.toFixed(6)),
+      rsi: rsiVal ? parseFloat(rsiVal.toFixed(1)) : null,
+      ema20: parseFloat(ema20now.toFixed(6)),
+      ema50: parseFloat(ema50now.toFixed(6)),
+      grund: typ + ' BUY | RSI=' + (rsiVal ? rsiVal.toFixed(0) : '?') + ' | ATR=' + atrPct.toFixed(3) + '%',
     };
   }
 
-  if (crossSell) {
-    if (rsiVal && rsiVal < 25) return { side: null, grund: 'SELL-Signal aber RSI oversold (' + rsiVal.toFixed(0) + ')' };
-    const sl = parseFloat((entry + currentAtr * atrSlFactor).toFixed(2));
-    const tp = parseFloat((entry - (sl - entry) * rrr).toFixed(2));
+  if (signalSell) {
+    if (rsiVal && rsiVal < 28) return { side: null, grund: 'SELL geblockt — RSI oversold (' + rsiVal.toFixed(0) + ')' };
+    const sl = fmt(entry + currentAtr * atrSlFactor);
+    const tp = fmt(entry - (sl - entry) * rrr);
+    const typ = crossSell ? 'EMA-Crossover' : trendSell ? 'Trend-Continuation' : 'RSI-Momentum';
     return {
-      side:  'SELL',
-      entry: parseFloat(entry.toFixed(2)),
-      sl, tp,
-      atr:   parseFloat(currentAtr.toFixed(4)),
-      rsi:   rsiVal ? parseFloat(rsiVal.toFixed(1)) : null,
-      ema20: parseFloat(ema20now.toFixed(4)),
-      ema50: parseFloat(ema50now.toFixed(4)),
-      grund: 'EMA20(' + ema20now.toFixed(2) + ') kreuzt EMA50(' + ema50now.toFixed(2) + ') abwaerts',
+      side: 'SELL', entry: fmt(entry), sl, tp,
+      atr: parseFloat(currentAtr.toFixed(6)),
+      rsi: rsiVal ? parseFloat(rsiVal.toFixed(1)) : null,
+      ema20: parseFloat(ema20now.toFixed(6)),
+      ema50: parseFloat(ema50now.toFixed(6)),
+      grund: typ + ' SELL | RSI=' + (rsiVal ? rsiVal.toFixed(0) : '?') + ' | ATR=' + atrPct.toFixed(3) + '%',
     };
   }
 
-  // Kein Crossover — nur Status zurückgeben
-  const trend = ema20now > ema50now ? 'EMA20>EMA50 (bullisch)' : 'EMA20<EMA50 (bearisch)';
-  return { side: null, grund: 'Kein Crossover — ' + trend + ' | RSI=' + (rsiVal ? rsiVal.toFixed(0) : '?') };
+  const trend = ema20now > ema50now ? 'bullisch' : 'bearisch';
+  return { side: null, grund: 'Kein Signal — ' + trend + ' | RSI=' + (rsiVal ? rsiVal.toFixed(0) : '?') };
 }
 
 // ── Main Loop ─────────────────────────────────────────────────
@@ -307,6 +327,9 @@ class MultiAssetScanner {
     this.atrSlFactor  = parseFloat(opts.atrSlFactor || '1.5');
     this.cooldownMs   = 5 * 60 * 1000;
 
+    // Strategies for round-robin distribution (passed from server.js)
+    this.strategies   = opts.strategies || [];
+
     // Build instrument list from opts or env
     this.instruments  = this._buildInstrumentList(opts.instruments);
 
@@ -318,13 +341,18 @@ class MultiAssetScanner {
   _buildInstrumentList(provided) {
     // Env override takes precedence
     if (process.env.SIGNAL_SCAN_EPICS) {
-      const stratBase = process.env.SIGNAL_SCAN_STRATEGIE || 'stegosaurus';
-      return process.env.SIGNAL_SCAN_EPICS.split(',').map(epic => ({
-        epic:        epic.trim(),
-        strategie:   stratBase,
+      const epics    = process.env.SIGNAL_SCAN_EPICS.split(',').map(e => e.trim());
+      const stratBase= process.env.SIGNAL_SCAN_STRATEGIE;
+      const pool     = (this.strategies && this.strategies.length) ? this.strategies : (stratBase ? [stratBase] : ['stegosaurus']);
+      const res      = process.env.SIGNAL_GEN_RESOLUTION || 'MINUTE';
+      const candles  = parseInt(process.env.SIGNAL_GEN_CANDLES || '100', 10);
+      return epics.map((epic, idx) => ({
+        epic,
+        // Round-robin across all available strategies — each epic gets its own strategy slot
+        strategie:   pool[idx % pool.length],
         rrr:         this.rrr,
-        resolution:  process.env.SIGNAL_GEN_RESOLUTION || 'MINUTE',
-        candleCount: parseInt(process.env.SIGNAL_GEN_CANDLES || '100', 10),
+        resolution:  res,
+        candleCount: candles,
       }));
     }
     // Default multi-asset list when nothing else is configured
