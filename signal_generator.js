@@ -361,8 +361,9 @@ class MultiAssetScanner {
     this._running = true;
     this.addLog('info', `[Scanner] Gestartet — ${this.instruments.length} Instrument(e): ${this.instruments.map(i => i.epic).join(', ')}`);
 
-    // Create one SignalGenerator per instrument
-    this._generators = this.instruments.map(inst => {
+    // Create one SignalGenerator per instrument — staggered start to avoid rate limiting
+    const STAGGER_MS = 8000; // 8s between each instrument start
+    this._generators = this.instruments.map((inst, idx) => {
       const gen = new SignalGenerator({
         baseUrl:      this.baseUrl,
         getHeaders:   this.getHeaders,
@@ -379,7 +380,12 @@ class MultiAssetScanner {
         secret:       this.secret,
       });
       this._stats[inst.epic] = { epic: inst.epic, strategie: inst.strategie };
-      gen.start();
+      // Stagger: first instrument starts immediately, each subsequent one 8s later
+      if (idx === 0) {
+        gen.start();
+      } else {
+        setTimeout(() => { if (this._running) gen.start(); }, idx * STAGGER_MS);
+      }
       return gen;
     });
   }
