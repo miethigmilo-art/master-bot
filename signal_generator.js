@@ -336,17 +336,21 @@ class MultiAssetScanner {
         return [{ epic: process.env.SIGNAL_GEN_EPIC, strategie: strat, rrr: this.rrr, resolution: res, candleCount: 100 }];
       }
       // Otherwise scan a broad default universe
+      // Capital.com epic names — verified format (NO MT4 names like XAUUSD/BITCOIN/ETHEREUM)
       return [
-        { epic: 'GOLD',      strategie: strat, rrr: 2.0, resolution: res,          candleCount: 100 },
-        { epic: 'EURUSD',    strategie: strat, rrr: 2.5, resolution: 'MINUTE_5',   candleCount: 100 },
-        { epic: 'GBPUSD',    strategie: strat, rrr: 2.5, resolution: 'MINUTE_5',   candleCount: 100 },
-        { epic: 'US500',     strategie: strat, rrr: 2.0, resolution: 'MINUTE_15',  candleCount: 100 },
-        { epic: 'BITCOIN',   strategie: strat, rrr: 2.0, resolution: 'MINUTE_15',  candleCount: 100 },
-        { epic: 'SILVER',    strategie: strat, rrr: 2.0, resolution: 'MINUTE_5',   candleCount: 100 },
-        { epic: 'OIL_CRUDE', strategie: strat, rrr: 2.0, resolution: 'MINUTE_15',  candleCount: 100 },
-        { epic: 'USDJPY',    strategie: strat, rrr: 2.5, resolution: 'MINUTE_5',   candleCount: 100 },
-        { epic: 'DE40',      strategie: strat, rrr: 2.0, resolution: 'MINUTE_15',  candleCount: 100 },
-        { epic: 'ETHEREUM',  strategie: strat, rrr: 2.0, resolution: 'MINUTE_15',  candleCount: 100 },
+        { epic: 'GOLD',       strategie: strat, rrr: 2.0, resolution: res,           candleCount: 100 },
+        { epic: 'SILVER',     strategie: strat, rrr: 2.0, resolution: 'MINUTE_5',    candleCount: 100 },
+        { epic: 'OIL_CRUDE',  strategie: strat, rrr: 2.0, resolution: 'MINUTE_15',   candleCount: 100 },
+        { epic: 'EURUSD',     strategie: strat, rrr: 2.5, resolution: 'MINUTE_5',    candleCount: 100 },
+        { epic: 'GBPUSD',     strategie: strat, rrr: 2.5, resolution: 'MINUTE_5',    candleCount: 100 },
+        { epic: 'USDJPY',     strategie: strat, rrr: 2.5, resolution: 'MINUTE_5',    candleCount: 100 },
+        { epic: 'AUDUSD',     strategie: strat, rrr: 2.5, resolution: 'MINUTE_5',    candleCount: 100 },
+        { epic: 'US500',      strategie: strat, rrr: 2.0, resolution: 'MINUTE_15',   candleCount: 100 },
+        { epic: 'US100',      strategie: strat, rrr: 2.0, resolution: 'MINUTE_15',   candleCount: 100 },
+        { epic: 'DE40',       strategie: strat, rrr: 2.0, resolution: 'MINUTE_15',   candleCount: 100 },
+        { epic: 'UK100',      strategie: strat, rrr: 2.0, resolution: 'MINUTE_15',   candleCount: 100 },
+        { epic: 'BTCUSD',     strategie: strat, rrr: 2.0, resolution: 'MINUTE_15',   candleCount: 100 },
+        { epic: 'ETHUSD',     strategie: strat, rrr: 2.0, resolution: 'MINUTE_15',   candleCount: 100 },
       ];
     }
     return provided;
