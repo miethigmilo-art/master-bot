@@ -102,8 +102,24 @@ initPortfolioAllocations();
 async function syncPortfolioCapital() {
   try {
     const balance = await broker.getBalance();
-    if (balance > 0) portfolioManager.setTotalCapital(balance);
-  } catch {}
+    if (balance > 0) {
+      portfolioManager.setTotalCapital(balance);
+      // Sync per-strategy equity for dashboard display (only if strategy hasn't traded yet)
+      const perStrategy = parseFloat((balance / STRATEGY_IDS.length).toFixed(2));
+      let changed = false;
+      for (const name of STRATEGY_IDS) {
+        const perf = performance[name];
+        if (perf && perf.trades === 0) {
+          perf.equity = perStrategy;
+          if (!perf.startEquity || perf.startEquity <= 1000) {
+            perf.startEquity = perStrategy;
+          }
+          changed = true;
+        }
+      }
+      if (changed) saveJSON(PERF_PATH, performance);
+    }
+  } catch (e) { console.error('[syncPortfolioCapital] error:', e.message); }
 }
 
 // ── State ─────────────────────────────────────────────
