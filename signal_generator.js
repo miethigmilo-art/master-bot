@@ -189,6 +189,7 @@ class SignalGenerator {
     this._running      = false;
     this._lastSignalTs = 0;
     this._cooldownMs   = 5 * 60 * 1000;  // 5 min zwischen Signalen
+    this.autoRoute     = opts.autoRoute || false;
     this._stats        = { checks: 0, signals: 0, errors: 0, lastCheck: null, lastSignal: null };
   }
 
@@ -275,21 +276,28 @@ class SignalGenerator {
 
   async _fireWebhook(sig) {
     const payload = {
-      side:   sig.side,
-      sl:     sig.sl,
-      tp:     sig.tp,
-      secret: this.secret,
+      side:    sig.side,
+      sl:      sig.sl,
+      tp:      sig.tp,
+      epic:    this.epic,   // Welches Asset gehandelt werden soll
+      secret:  this.secret,
       // Zusatz-Info fuer Logging
-      _source: 'signal_generator',
-      _ema20:  sig.ema20,
-      _ema50:  sig.ema50,
-      _atr:    sig.atr,
-      _rsi:    sig.rsi,
+      _source:   'signal_generator',
+      _epic:     this.epic,
+      _strategie: this.strategie,
+      _ema20:    sig.ema20,
+      _ema50:    sig.ema50,
+      _atr:      sig.atr,
+      _rsi:      sig.rsi,
+      _grund:    sig.grund,
     };
-    const url = 'http://localhost:' + this.port + '/webhook/' + this.strategie;
+    // Wenn strategie 'auto' → Auto-Routing (jeder freie Bot kann es nehmen)
+    // Wenn spezifisch → direkt an diese Strategie
+    const endpoint = this.autoRoute ? 'auto' : this.strategie;
+    const url = 'http://localhost:' + this.port + '/webhook/' + endpoint;
     try {
       const r = await axios.post(url, payload, { timeout: 30000 });
-      this.addLog('info', '[SigGen] Webhook-Antwort: ' + JSON.stringify(r.data));
+      this.addLog('info', '[SigGen] Webhook-Antwort (' + endpoint + '): ' + JSON.stringify(r.data));
     } catch(err) {
       const detail = err.response ? JSON.stringify(err.response.data) : err.message;
       this.addLog('warn', '[SigGen] Webhook-Fehler: ' + detail);
@@ -406,6 +414,7 @@ class MultiAssetScanner {
         resolution:   inst.resolution || 'MINUTE',
         candleCount:  inst.candleCount || 100,
         secret:       this.secret,
+        autoRoute:    true,  // Signal geht an /webhook/auto → freier Bot übernimmt
       });
       this._stats[inst.epic] = { epic: inst.epic, strategie: inst.strategie };
       // Stagger: first instrument starts immediately, each subsequent one 8s later
@@ -450,6 +459,7 @@ class MultiAssetScanner {
       resolution:  inst.resolution || 'MINUTE',
       candleCount: inst.candleCount || 100,
       secret:      this.secret,
+      autoRoute:   true,
     });
     this.instruments.push(inst);
     this._generators.push(gen);

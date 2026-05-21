@@ -1209,6 +1209,33 @@ STRATEGY_IDS.forEach(n => {
   if (!STRATEGY_IDS.includes(n)) app.post(`/webhook/${n}`, (req, res) => handleWebhook(req, res, n));
 });
 app.post('/webhook/goldglobe', (req, res) => handleWebhook(req, res, STRATEGY_IDS[0] || 'stegosaurus'));
+
+// ── Auto-Routing Webhook: beliebiger freier Bot nimmt das Signal ──────────────
+// Scanner sendet hierher; der erste freie Bot (kein aktiver Trade, nicht pausiert)
+// übernimmt das Signal. Alle Bots können jeden Ticker handeln.
+app.post('/webhook/auto', (req, res) => {
+  // Finde alle verfügbaren Strategien (kein aktiver Trade, nicht score-pausiert, enabled)
+  const available = STRATEGY_IDS.filter(n => {
+    if (aktiveTrades[n]) return false;
+    if (scorePauses[n]?.paused) return false;
+    if (!SETTINGS[n]?.enabled) return false;
+    // Cooldown check
+    if (letzterTrade[n] && Date.now() - letzterTrade[n] < 30000) return false;
+    return true;
+  });
+  if (!available.length) {
+    addLog('info', '[Auto-Webhook] Alle Bots beschäftigt — Signal ignoriert');
+    return res.status(429).json({ error: 'Alle Bots beschäftigt', aktiveTrades });
+  }
+  // Wähle den Bot der am längsten nicht getradet hat (fair distribution)
+  const chosen = available.sort((a, b) => {
+    const ta = letzterTrade[a] || 0;
+    const tb = letzterTrade[b] || 0;
+    return ta - tb;
+  })[0];
+  addLog('info', `[Auto-Webhook] Signal (${req.body?.side || '?'} ${req.body?._epic || ''}) → ${chosen}`);
+  handleWebhook(req, res, chosen);
+});
 // ── PnL-Webhook ───────────────────────────────────────────────────────────────
 // TradingView sendet diesen Webhook wenn ein Trade geschlossen wird.
 // Payload: { strategie, pnl, side, datum? }
