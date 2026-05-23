@@ -17,10 +17,20 @@ class RiskEngine {
     this._aktiv   = true;
 
     // Risk Engine abonniert signal-stream
+    // BUGFIX: setImmediate() verhindert eine Race Condition.
+    // _evaluate() ist async aber hat kein await — läuft also synchron durch und
+    // emittiert RISK_SIZED/REJECTED BEVOR waitForRiskDecision() seinen Listener
+    // auf dem RISK-Stream registrieren kann. Das führt dazu, dass alle Signale
+    // in den 5s-Timeout laufen und kein einziger Trade ausgeführt wird.
+    // setImmediate() stellt sicher, dass die Evaluation NACH dem aktuellen
+    // Synchron-Call-Stack startet — also nachdem waitForRiskDecision() seinen
+    // Listener bereits registriert hat.
     bus.subscribe(STREAMS.SIGNAL, (event) => {
       if (event.type === EVENT_TYPES.SIGNAL_ENRICHED) {
-        this._evaluate(event).catch(err => {
-          bus.emit_event(EVENT_TYPES.ERROR, 'risk_engine', { error: err.message, event });
+        setImmediate(() => {
+          this._evaluate(event).catch(err => {
+            bus.emit_event(EVENT_TYPES.ERROR, 'risk_engine', { error: err.message, event });
+          });
         });
       }
     });
