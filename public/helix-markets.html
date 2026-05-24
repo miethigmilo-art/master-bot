@@ -288,6 +288,7 @@ td{padding:8px 12px;color:var(--text)}
         <span class="s-ic">⌕</span>
       </div>
       <div class="tb-right">
+        <div class="mkt-status"><div class="mkt-dot" id="t212-dot" style="background:var(--dim)"></div><span id="t212-lbl">T212 …</span></div>
         <div class="mkt-status"><div class="mkt-dot"></div>NYSE OPEN</div>
         <div class="livetime" id="clock">--:--:--</div>
         <div class="tb-btn" onclick="openCmd()">⌘ Suchen</div>
@@ -323,9 +324,9 @@ td{padding:8px 12px;color:var(--text)}
             <div class="kpi-sub">Portfolio optimiert</div>
           </div>
           <div class="kpi g">
-            <div class="kpi-label">Marktstimmung</div>
-            <div class="kpi-val g">BULLISH</div>
-            <div class="kpi-sub">Fear &amp; Greed: 68</div>
+            <div class="kpi-label">Freies Cash</div>
+            <div class="kpi-val g" id="kpi-cash">—</div>
+            <div class="kpi-sub">Trading 212 Live</div>
           </div>
         </div>
 
@@ -949,34 +950,24 @@ function animNum(el,target,pre,suf,dec){
   requestAnimationFrame(step);
 }
 
-/* ════ INIT ════ */
-document.addEventListener('DOMContentLoaded',()=>{
-  buildTicker();
-  buildMovers();
-  buildAIFeed();
-  buildAlerts();
-  buildAnalysisTable();
-  buildPortfolioTable();
-  buildRecs('all');
-  buildAICard('AAPL');
-  tick();setInterval(tick,1000);
-  setTimeout(buildPortChart,300);
-  setTimeout(()=>{
-    animNum(document.getElementById('kpi-pv'),124840,'€','',0);
-    animNum(document.getElementById('kpi-dg'),2917,'+€','',0);
-  },400);
+/* ════ TRADING 212 LIVE DATA ════ */
+async function loadT212(){
+  const dot=document.getElementById('t212-dot');
+  const lbl=document.getElementById('t212-lbl');
+  try {
+    const [cashRes, portRes] = await Promise.all([
+      fetch('/api/trading212/cash'),
+      fetch('/api/trading212/portfolio')
+    ]);
+    if(!cashRes.ok || !portRes.ok) throw new Error('API error');
+    const cash = await cashRes.json();
+    const port = await portRes.json();
 
-  // Keyboard shortcuts
-  document.addEventListener('keydown',e=>{
-    if((e.metaKey||e.ctrlKey)&&e.key==='k'){e.preventDefault();openCmd();}
-    if(e.key==='Escape')closeCmd();
-  });
-
-  // Live ticker flicker effect
-  setInterval(()=>{
-    const dots=document.querySelectorAll('.tk-dot,.mkt-dot,.online-dot');
-    dots.forEach(d=>{if(Math.random()>.7){d.style.opacity='.4';setTimeout(()=>d.style.opacity='1',200);}});
-  },4000);
-});
-</script>
-</bo
+    // ── KPI: Portfolio-Wert ──
+    const total = cash.total ?? cash.totalCash ?? null;
+    const free  = cash.free  ?? cash.freeForStocks ?? null;
+    if(total!=null){
+      document.getElementById('kpi-pv').textContent='€'+Math.round(total).toLocaleString('de-DE');
+    }
+    if(free!=null){
+  
