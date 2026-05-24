@@ -289,6 +289,7 @@ td{padding:8px 12px;color:var(--text)}
       </div>
       <div class="tb-right">
         <div class="mkt-status"><div class="mkt-dot" id="t212-dot" style="background:var(--dim)"></div><span id="t212-lbl">T212 …</span></div>
+        <div class="mkt-status"><div class="mkt-dot" id="t212-dot" style="background:var(--dim)"></div><span id="t212-lbl">T212 …</span></div>
         <div class="mkt-status"><div class="mkt-dot"></div>NYSE OPEN</div>
         <div class="livetime" id="clock">--:--:--</div>
         <div class="tb-btn" onclick="openCmd()">⌘ Suchen</div>
@@ -997,14 +998,6 @@ async function loadT212(){
     console.warn('T212:',err.message);
     if(dot) dot.style.background='var(--red)';
     if(lbl) lbl.textContent='T212 OFFLINE';
-    // Set all T212-driven fields to N/A so mock data doesn't confuse
-    const na='<span style="color:#fff;opacity:.4">N/A</span>';
-    const pvEl=document.getElementById('kpi-pv');
-    const cashEl=document.getElementById('kpi-cash');
-    if(pvEl) pvEl.innerHTML=na;
-    if(cashEl) cashEl.innerHTML=na;
-    const tb=document.getElementById('portTb');
-    if(tb) tb.innerHTML=`<tr><td colspan="8" style="text-align:center;padding:24px;color:#fff;opacity:.35;font-size:11px;letter-spacing:1px">TRADING 212 OFFLINE — KEINE DATEN VERFÜGBAR</td></tr>`;
   }
 }
 
@@ -1017,4 +1010,23 @@ document.addEventListener('DOMContentLoaded',()=>{
   buildAnalysisTable();
   buildPortfolioTable();
   buildRecs('all');
-  buildA
+  buildAICard('AAPL');
+  tick();setInterval(tick,1000);
+  setTimeout(buildPortChart,300);
+  loadT212();
+  setInterval(loadT212,30000);
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown',e=>{
+    if((e.metaKey||e.ctrlKey)&&e.key==='k'){e.preventDefault();openCmd();}
+    if(e.key==='Escape')closeCmd();
+  });
+
+  // Live ticker flicker effect
+  setInterval(()=>{
+    const dots=document.querySelectorAll('.tk-dot,.mkt-dot,.online-dot');
+    dots.forEach(d=>{if(Math.random()>.7){d.style.opacity='.4';setTimeout(()=>d.style.opacity='1',200);}});
+  },4000);
+});
+</script>
+</bo
