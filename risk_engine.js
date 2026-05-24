@@ -97,10 +97,16 @@ class RiskEngine {
     const sizingFaktor = parseFloat((mlSizing * mmSizing).toFixed(2));
     const riskCapital  = equity * (settings.riskPct / 100) * sizingFaktor;
     // Raw size from risk formula, then cap at maxSizeUSD (default 5000 USD notional)
+    // Use entry if available, otherwise fall back to SL price as proxy
     const rawSize      = slDist > 0 ? riskCapital / slDist : 1;
     const maxSizeUSD   = settings.maxSizeUSD ?? 5000;
-    const maxUnits     = entry > 0 ? maxSizeUSD / entry : rawSize;
+    const priceProxy   = entry > 0 ? entry : (parseFloat(sl) || 1);
+    const maxUnits     = maxSizeUSD / priceProxy;
     const size         = parseFloat(Math.max(1, Math.min(rawSize, maxUnits)).toFixed(1));
+    if (rawSize > maxUnits) {
+      bus.emit_event(EVENT_TYPES.INFO ?? 'INFO', 'risk_engine',
+        { msg: `Size capped: ${rawSize.toFixed(1)} → ${size} (max ${maxSizeUSD} USD / ${priceProxy.toFixed(4)})` });
+    }
 
     bus.emit_event(EVENT_TYPES.RISK_SIZED, 'risk_engine', {
       ...signalEvent.payload,
