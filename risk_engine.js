@@ -96,9 +96,11 @@ class RiskEngine {
     const mlSizing    = signalEvent.payload.mlSizingFaktor ?? 1.0;
     const sizingFaktor = parseFloat((mlSizing * mmSizing).toFixed(2));
     const riskCapital  = equity * (settings.riskPct / 100) * sizingFaktor;
-    const size         = slDist > 0
-      ? Math.max(1, parseFloat((riskCapital / slDist).toFixed(1)))
-      : 1;
+    // Raw size from risk formula, then cap at maxSizeUSD (default 5000 USD notional)
+    const rawSize      = slDist > 0 ? riskCapital / slDist : 1;
+    const maxSizeUSD   = settings.maxSizeUSD ?? 5000;
+    const maxUnits     = entry > 0 ? maxSizeUSD / entry : rawSize;
+    const size         = parseFloat(Math.max(1, Math.min(rawSize, maxUnits)).toFixed(1));
 
     bus.emit_event(EVENT_TYPES.RISK_SIZED, 'risk_engine', {
       ...signalEvent.payload,
@@ -124,15 +126,4 @@ class RiskEngine {
 
   // Manuell einen Check auslösen (für Tests/Debug)
   async check(payload) {
-    const syntheticEvent = {
-      id:        'manual',
-      type:      EVENT_TYPES.SIGNAL_ENRICHED,
-      source:    'manual',
-      timestamp: Date.now(),
-      payload,
-    };
-    await this._evaluate(syntheticEvent);
-  }
-}
-
-module.exports = { RiskEngine };
+    const synth

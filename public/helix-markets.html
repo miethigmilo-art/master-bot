@@ -289,7 +289,6 @@ td{padding:8px 12px;color:var(--text)}
       </div>
       <div class="tb-right">
         <div class="mkt-status"><div class="mkt-dot" id="t212-dot" style="background:var(--dim)"></div><span id="t212-lbl">T212 …</span></div>
-        <div class="mkt-status"><div class="mkt-dot" id="t212-dot" style="background:var(--dim)"></div><span id="t212-lbl">T212 …</span></div>
         <div class="mkt-status"><div class="mkt-dot"></div>NYSE OPEN</div>
         <div class="livetime" id="clock">--:--:--</div>
         <div class="tb-btn" onclick="openCmd()">⌘ Suchen</div>
@@ -316,12 +315,12 @@ td{padding:8px 12px;color:var(--text)}
           </div>
           <div class="kpi y">
             <div class="kpi-label">Risk Level</div>
-            <div class="kpi-val y">MEDIUM</div>
+            <div class="kpi-val y" id="kpi-risk" style="color:rgba(255,255,255,.3)">N/A</div>
             <div class="kpi-sub">3 Positionen erhöht</div>
           </div>
           <div class="kpi b">
             <div class="kpi-label">KI Portfolio Score</div>
-            <div class="kpi-val b">82 / 100</div>
+            <div class="kpi-val b" id="kpi-score" style="color:rgba(255,255,255,.3)">N/A</div>
             <div class="kpi-sub">Portfolio optimiert</div>
           </div>
           <div class="kpi g">
