@@ -994,6 +994,15 @@ async function loadT212(){
     }
     if(dot) dot.style.background='var(--green)';
     if(lbl) lbl.textContent='T212 LIVE';
+    // Only build UI components after real data confirmed
+    buildTicker();
+    buildMovers();
+    buildAIFeed();
+    buildAlerts();
+    buildRecs('all');
+    buildAICard('AAPL');
+    setTimeout(buildPortChart,100);
+    setTimeout(buildStockChart,200);
   }catch(err){
     console.warn('T212:',err.message);
     if(dot) dot.style.background='var(--red)';
@@ -1003,30 +1012,27 @@ async function loadT212(){
 
 /* ════ INIT ════ */
 document.addEventListener('DOMContentLoaded',()=>{
-  buildTicker();
-  buildMovers();
-  buildAIFeed();
-  buildAlerts();
-  buildAnalysisTable();
-  buildPortfolioTable();
-  buildRecs('all');
-  buildAICard('AAPL');
+  // Show nothing until T212 confirms — no fake data
+  showOfflineState();
   tick();setInterval(tick,1000);
-  setTimeout(buildPortChart,300);
   loadT212();
   setInterval(loadT212,30000);
-
-  // Keyboard shortcuts
   document.addEventListener('keydown',e=>{
     if((e.metaKey||e.ctrlKey)&&e.key==='k'){e.preventDefault();openCmd();}
     if(e.key==='Escape')closeCmd();
   });
-
-  // Live ticker flicker effect
   setInterval(()=>{
     const dots=document.querySelectorAll('.tk-dot,.mkt-dot,.online-dot');
     dots.forEach(d=>{if(Math.random()>.7){d.style.opacity='.4';setTimeout(()=>d.style.opacity='1',200);}});
   },4000);
 });
+
+function showOfflineState(){
+  const dot=document.getElementById('t212-dot');
+  const lbl=document.getElementById('t212-lbl');
+  if(dot) dot.style.background='var(--dim)';
+  if(lbl) lbl.textContent='T212 …';
+  t212Blackout();
+}
 </script>
 </bo
