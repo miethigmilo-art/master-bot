@@ -8,6 +8,7 @@ const crypto = require('crypto');
 
 // Paths that are always public (no auth required)
 const PUBLIC_PATHS = [
+  '/api/trading212',
   '/health',
   '/api/health',
 ];
