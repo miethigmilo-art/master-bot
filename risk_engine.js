@@ -126,4 +126,15 @@ class RiskEngine {
 
   // Manuell einen Check auslösen (für Tests/Debug)
   async check(payload) {
-    const synth
+    const syntheticEvent = {
+      id:        'manual',
+      type:      EVENT_TYPES.SIGNAL_ENRICHED,
+      source:    'manual',
+      timestamp: Date.now(),
+      payload,
+    };
+    await this._evaluate(syntheticEvent);
+  }
+}
+
+module.exports = { RiskEngine };
