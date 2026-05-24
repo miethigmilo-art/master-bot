@@ -2006,6 +2006,7 @@ app.post('/api/recovery/reconcile', async (req, res) => {
   }
 });
 
+
 // ══════════════════════════════════════════════════════════════
 //  Trading 212 Proxy — forwards requests to T212 Live API
 //  API key stays server-side in TRADING212_API_KEY env var
@@ -2176,4 +2177,36 @@ async function startServer() {
   setInterval(pruefeModelDrift, META_CFG.CHECK_INTERVAL * 60 * 1000);
 
   // Strategie-Score alle 4h pruefen (+ sofort nach 10s)
-  se
+  setTimeout(pruefeAlleScores, 10 * 1000);
+  setInterval(pruefeAlleScores, 4 * 60 * 60 * 1000);
+
+  // Multi-Asset Scanner (HELIX Phase 3) — scans multiple instruments simultaneously
+  // Set SIGNAL_SCAN_EPICS=GOLD,EURUSD,US500 to override instrument list
+  // Falls back to SIGNAL_GEN_EPIC (single instrument) for backwards compat
+  if (process.env.SIGNAL_GEN_ENABLED === 'true') {
+    sigGen = new MultiAssetScanner({
+      baseUrl:      BASE_URL,
+      getHeaders:   (_name) => getCapitalHeaders(),
+      ensureAuth:   ensureAuth,
+      addLog:       addLog,
+      port:         PORT,
+      rrr:          process.env.SIGNAL_GEN_RRR    || '2.0',
+      atrSlFactor:  process.env.SIGNAL_GEN_ATR_SL || '1.5',
+      intervalMs:   (parseInt(process.env.SIGNAL_GEN_INTERVAL || '60', 10)) * 1000,
+      secret:       process.env.WEBHOOK_SECRET    || '',
+      // Pass all strategy IDs so epics are distributed across strategies (1 trade per strategy)
+      strategies:   STRATEGY_IDS,
+      // Explicit instrument list (optional — falls back to env SIGNAL_SCAN_EPICS)
+      instruments:  null,
+    });
+    sigGen.start();
+    addLog('info', '[Scanner] Multi-Asset Scanner aktiv');
+  } else {
+    addLog('info', '[Scanner] Signal Scanner inaktiv (ENV: SIGNAL_GEN_ENABLED=false oder nicht gesetzt)');
+  }
+}
+
+startServer().catch(err => {
+  console.error('Startup-Fehler:', err);
+  process.exit(1);
+});
