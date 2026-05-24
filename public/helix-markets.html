@@ -954,20 +954,78 @@ function animNum(el,target,pre,suf,dec){
 async function loadT212(){
   const dot=document.getElementById('t212-dot');
   const lbl=document.getElementById('t212-lbl');
-  try {
-    const [cashRes, portRes] = await Promise.all([
+  try{
+    const [cashRes,portRes]=await Promise.all([
       fetch('/api/trading212/cash'),
       fetch('/api/trading212/portfolio')
     ]);
-    if(!cashRes.ok || !portRes.ok) throw new Error('API error');
-    const cash = await cashRes.json();
-    const port = await portRes.json();
-
-    // ── KPI: Portfolio-Wert ──
-    const total = cash.total ?? cash.totalCash ?? null;
-    const free  = cash.free  ?? cash.freeForStocks ?? null;
-    if(total!=null){
-      document.getElementById('kpi-pv').textContent='€'+Math.round(total).toLocaleString('de-DE');
+    if(!cashRes.ok||!portRes.ok) throw new Error('API error');
+    const cash=await cashRes.json();
+    const port=await portRes.json();
+    const total=cash.total??null;
+    const free=cash.free??null;
+    if(total!=null) document.getElementById('kpi-pv').textContent='€'+Math.round(total).toLocaleString('de-DE');
+    if(free!=null) document.getElementById('kpi-cash').textContent='€'+Math.round(free).toLocaleString('de-DE');
+    const positions=Array.isArray(port)?port:(port.items||[]);
+    if(positions.length>0){
+      document.getElementById('portTb').innerHTML=positions.map(p=>{
+        const cost=p.averagePrice??p.breakEvenPrice??0;
+        const cur=p.currentPrice??cost;
+        const qty=p.quantity??0;
+        const pnl=(cur-cost)*qty;
+        const pct=cost>0?((cur-cost)/cost)*100:0;
+        const pos=pnl>=0;
+        const ticker=(p.ticker??p.symbol??'—').replace(/_US_EQ|_EQ|_US/g,'');
+        const rag=pct>5?'green':pct<-5?'red':'yellow';
+        const rb=rag==='green'?'bg':rag==='red'?'br':'by';
+        const rl=rag==='green'?'BUY':rag==='red'?'SELL':'HOLD';
+        return `<tr>
+          <td><div class="pos-ind ${rag}"></div></td>
+          <td class="td-sym">${ticker}</td>
+          <td>${qty%1===0?qty:qty.toFixed(4)}</td>
+          <td>€${cost.toFixed(2)}</td>
+          <td class="td-px">€${cur.toFixed(2)}</td>
+          <td class="${pos?'up':'down'}">${pos?'+':''}€${Math.abs(pnl).toFixed(0)}</td>
+          <td class="${pos?'up':'down'}">${pos?'+':''}${pct.toFixed(1)}%</td>
+          <td><span class="badge ${rb}">${rl}</span></td>
+        </tr>`;
+      }).join('');
     }
-    if(free!=null){
-  
+    if(dot) dot.style.background='var(--green)';
+    if(lbl) lbl.textContent='T212 LIVE';
+  }catch(err){
+    console.warn('T212:',err.message);
+    if(dot) dot.style.background='var(--red)';
+    if(lbl) lbl.textContent='T212 OFFLINE';
+  }
+}
+
+/* ════ INIT ════ */
+document.addEventListener('DOMContentLoaded',()=>{
+  buildTicker();
+  buildMovers();
+  buildAIFeed();
+  buildAlerts();
+  buildAnalysisTable();
+  buildPortfolioTable();
+  buildRecs('all');
+  buildAICard('AAPL');
+  tick();setInterval(tick,1000);
+  setTimeout(buildPortChart,300);
+  loadT212();
+  setInterval(loadT212,30000);
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown',e=>{
+    if((e.metaKey||e.ctrlKey)&&e.key==='k'){e.preventDefault();openCmd();}
+    if(e.key==='Escape')closeCmd();
+  });
+
+  // Live ticker flicker effect
+  setInterval(()=>{
+    const dots=document.querySelectorAll('.tk-dot,.mkt-dot,.online-dot');
+    dots.forEach(d=>{if(Math.random()>.7){d.style.opacity='.4';setTimeout(()=>d.style.opacity='1',200);}});
+  },4000);
+});
+</script>
+</bo
