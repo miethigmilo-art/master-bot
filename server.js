@@ -2011,15 +2011,19 @@ app.post('/api/recovery/reconcile', async (req, res) => {
 //  Trading 212 Proxy — forwards requests to T212 Live API
 //  API key stays server-side in TRADING212_API_KEY env var
 // ══════════════════════════════════════════════════════════════
-const T212_BASE = 'https://live.trading212.com/api/v0';
+const T212_MODE = (process.env.TRADING212_MODE || 'live').toLowerCase();
+const T212_BASE  = T212_MODE === 'demo'
+  ? 'https://demo.trading212.com/api/v0'
+  : 'https://live.trading212.com/api/v0';
+console.log(`[T212] Mode: ${T212_MODE.toUpperCase()} — ${T212_BASE}`);
 
 async function t212(endpoint, res) {
-  const key = process.env.TRADING212_API_KEY;
+  const key = (process.env.TRADING212_API_KEY || '').trim();
   if (!key) {
     console.error('[T212] TRADING212_API_KEY not set in env');
     return res.status(503).json({ error: 'TRADING212_API_KEY not configured' });
   }
-  console.log(`[T212] Fetching ${endpoint} (key: ...${key.slice(-6)})`);
+  console.log(`[T212] Fetching ${endpoint} (key len: ${key.length}, ends: ...${key.slice(-6)})`);
   try {
     const r = await axios.get(`${T212_BASE}${endpoint}`, {
       headers: { Authorization: key },
