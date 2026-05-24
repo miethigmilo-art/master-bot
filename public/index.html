@@ -287,104 +287,6 @@ body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font-sans
 </head>
 <body><div id="root"></div>
 <script>
-// ── Login Screen + Auth Token Injection ──────────────────────────────────────
-(function() {
-  const DASHBOARD_TOKEN = 'tpqFsWvyLv9Wmciy72XPkpganF8QZLOupFLEDrPuZnUpybnoujWP';
-  const SESSION_KEY = 'helix_auth';
-
-  // Patch fetch to auto-add token to all API calls
-  const _orig = window.fetch.bind(window);
-  window.fetch = function(url, opts) {
-    if (typeof url === 'string' && url.startsWith('/api')) {
-      const sep = url.includes('?') ? '&' : '?';
-      url = url + sep + 'token=' + encodeURIComponent(DASHBOARD_TOKEN);
-    }
-    return _orig(url, opts);
-  };
-
-  // Show login if not authenticated
-  function isAuth() { return sessionStorage.getItem(SESSION_KEY) === '1'; }
-
-  function showLogin() {
-    const el = document.createElement('div');
-    el.id = 'helix-login';
-    el.innerHTML = `
-      <style>
-        #helix-login {
-          position:fixed;inset:0;background:#0a0d12;display:flex;
-          align-items:center;justify-content:center;z-index:99999;
-          font-family:'Inter',system-ui,sans-serif;
-        }
-        #helix-login .box {
-          background:#11161e;border:1px solid rgba(255,255,255,0.08);
-          border-radius:16px;padding:48px 40px;width:340px;text-align:center;
-          box-shadow:0 24px 80px rgba(0,0,0,0.6);
-        }
-        #helix-login .logo {
-          width:52px;height:52px;background:#6366f1;border-radius:13px;
-          display:inline-flex;align-items:center;justify-content:center;
-          font-size:22px;font-weight:700;color:#fff;margin-bottom:20px;
-        }
-        #helix-login h2 {
-          color:#f1f5f9;margin:0 0 6px;font-size:20px;font-weight:600;
-        }
-        #helix-login p {
-          color:#64748b;margin:0 0 28px;font-size:13px;
-        }
-        #helix-login input {
-          width:100%;padding:12px 16px;background:#0a0d12;
-          border:1px solid rgba(255,255,255,0.1);border-radius:10px;
-          color:#f1f5f9;font-size:15px;letter-spacing:2px;
-          outline:none;box-sizing:border-box;text-align:center;
-          transition:border-color .2s;
-        }
-        #helix-login input:focus { border-color:#6366f1; }
-        #helix-login button {
-          margin-top:14px;width:100%;padding:13px;background:#6366f1;
-          border:none;border-radius:10px;color:#fff;font-size:15px;
-          font-weight:600;cursor:pointer;transition:background .2s;
-        }
-        #helix-login button:hover { background:#4f46e5; }
-        #helix-login .err {
-          color:#ef4444;font-size:12px;margin-top:10px;min-height:18px;
-        }
-      </style>
-      <div class="box">
-        <div class="logo">H</div>
-        <h2>HELIX</h2>
-        <p>Trading System Dashboard</p>
-        <input id="hl-pw" type="password" placeholder="Passwort" autocomplete="current-password" />
-        <button id="hl-btn">Einloggen</button>
-        <div class="err" id="hl-err"></div>
-      </div>`;
-    document.body.appendChild(el);
-
-    function tryLogin() {
-      const pw = document.getElementById('hl-pw').value;
-      if (pw === '1kreuzberg') {
-        sessionStorage.setItem(SESSION_KEY, '1');
-        document.getElementById('helix-login').remove();
-      } else {
-        const err = document.getElementById('hl-err');
-        err.textContent = 'Falsches Passwort';
-        document.getElementById('hl-pw').value = '';
-        setTimeout(() => { err.textContent = ''; }, 2000);
-      }
-    }
-
-    document.getElementById('hl-btn').addEventListener('click', tryLogin);
-    document.getElementById('hl-pw').addEventListener('keydown', e => {
-      if (e.key === 'Enter') tryLogin();
-    });
-    setTimeout(() => document.getElementById('hl-pw')?.focus(), 50);
-  }
-
-  if (!isAuth()) {
-    document.addEventListener('DOMContentLoaded', showLogin);
-  }
-})();
-</script>
-<script>
 const {
   useState,
   useEffect,
@@ -2886,12 +2788,10 @@ function SystemHealthScreen({
 }) {
   const D = window.BOT_DATA;
   const [sigGen, setSigGen] = useState(null);
-  const [mlSvcOk, setMlSvcOk] = useState(false);
   const [audit, setAudit] = useState([]);
   const [brokerHealth, setBrokerHealth] = useState(null);
   useEffect(() => {
     fetch('/api/signal-generator').then(r => r.ok ? r.json() : null).then(d => d && setSigGen(d)).catch(() => {});
-    fetch('/api/ml-status').then(r => r.ok ? r.json() : null).then(d => d && setMlSvcOk(Object.keys(d.status||{}).length > 0 || !!d.url)).catch(() => {});
     fetch('/api/audit').then(r => r.ok ? r.json() : null).then(d => d && setAudit(Array.isArray(d) ? d : [])).catch(() => {});
     const loadBroker = () => fetch('/api/broker/health').then(r => r.ok ? r.json() : null).then(d => d && setBrokerHealth(d)).catch(() => {});
     loadBroker();
@@ -2908,7 +2808,7 @@ function SystemHealthScreen({
   const services = [{
     name: 'WebSocket',
     status: wsStatus === 'connected' ? 'ok' : 'warn',
-    latency: metrics.latencies?.broker_latency?.avg || 0,
+    latency: metrics.avgLatency || 0,
     count: metrics.signals_received || 0,
     cat: 'transport'
   }, {
@@ -2925,8 +2825,8 @@ function SystemHealthScreen({
     cat: 'messaging'
   }, {
     name: 'ML Service',
-    status: mlSvcOk ? 'ok' : 'unknown',
-    latency: metrics.latencies?.ml_latency?.avg || 0,
+    status: 'unknown',
+    latency: 0,
     count: 0,
     cat: 'ml'
   }, {
@@ -2936,7 +2836,7 @@ function SystemHealthScreen({
     count: sigGen?.signalsGenerated || 0,
     cat: 'signals'
   }, {
-    name: 'Broker (Capital.com)',
+    name: 'Broker (IBKR)',
     status: brokerHealth == null ? 'unknown' : brokerHealth.connected ? 'ok' : 'error',
     latency: brokerHealth?.latencyMs || 0,
     count: brokerHealth?.reconnects || 0,
@@ -3210,17 +3110,18 @@ function SystemHealthScreen({
     className: "card-head"
   }, /*#__PURE__*/React.createElement("span", {
     className: "card-title"
-  }, "Broker — Capital.com"), /*#__PURE__*/React.createElement("span", {
+  }, "Broker — IBKR"), /*#__PURE__*/React.createElement("span", {
     className: `tag ${brokerHealth.connected ? 'long' : 'short'}`
   }, brokerHealth.connected ? 'CONNECTED' : 'DISCONNECTED')), /*#__PURE__*/React.createElement("div", {
     className: "sh-res-grid"
   }, [
-    ['Email', brokerHealth.email || '—'],
+    ['Account', brokerHealth.account || '—'],
     ['Balance', brokerHealth.balance > 0 ? '$' + brokerHealth.balance.toLocaleString('en-US', {maximumFractionDigits: 0}) : '—'],
-    ['Session', brokerHealth.hasSession ? 'Active ✓' : 'None'],
-    ['Expires In', brokerHealth.sessionExpiresIn || '—'],
+    ['Positions', String(brokerHealth.positions || 0)],
+    ['Open Orders', String(brokerHealth.openOrders || 0)],
     ['Reconnects', String(brokerHealth.reconnects || 0)],
     ['Errors', String(brokerHealth.errors || 0)],
+    ['Host', (brokerHealth.host || '—') + ':' + (brokerHealth.port || '')],
     ['Last Error', brokerHealth.lastError ? brokerHealth.lastError.msg + ' @ ' + fmtTime(brokerHealth.lastError.ts) : 'None'],
   ].map(([label, value]) => /*#__PURE__*/React.createElement("div", {
     key: label,
@@ -3407,112 +3308,6 @@ function ReplayScreen() {
 }
 
 // ─── Scanner Screen (HELIX Phase 3) ───────────────────────────────────────
-function TestTradePanel() {
-  const D = window.BOT_DATA;
-  const bots = (D && D.bots) ? D.bots.map(b => b.name || b.codename) : [];
-  const EPICS_FLAT = ['GOLD','EURUSD','GBPUSD','USDJPY','US500','US100','BITCOIN','ETHEREUM','SILVER','OIL_CRUDE','DE40','AUDUSD','USDCAD'];
-  const [form, setForm] = useState({
-    strategie: bots[0] || '',
-    epic: 'GOLD',
-    side: 'AUTO',
-    slPct: '1.0',
-    rrr: '2.0',
-    bypass: false,
-  });
-  const [result, setResult] = useState(null);
-  const [loading, setLoading] = useState(false);
-
-  const fire = async () => {
-    if (!form.strategie) return;
-    setLoading(true);
-    setResult(null);
-    try {
-      const body = { strategie: form.strategie, epic: form.epic, slPct: form.slPct, rrr: form.rrr, bypass: form.bypass };
-      if (form.side !== 'AUTO') body.side = form.side;
-      const r = await fetch('/api/test-trade', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(body),
-      });
-      const d = await r.json();
-      setResult({ ok: r.ok, ...d });
-    } catch (e) {
-      setResult({ ok: false, error: e.message });
-    }
-    setLoading(false);
-  };
-
-  const res = result?.result || {};
-  const isOk = result?.ok && (res.status === 'ok' || res.dealId);
-  const isSkip = result?.ok && (res.status === 'uebersprungen' || res.status === 'übersprungen' || res.status === 'pausiert');
-  const statusColor = !result ? null : isOk ? 'var(--pos)' : isSkip ? 'var(--warn, #e0a619)' : 'var(--text-faint)';
-
-  return /*#__PURE__*/React.createElement("div", {style: {display: 'flex', flexDirection: 'column', gap: 10}},
-    /*#__PURE__*/React.createElement("div", {className: "sc-form", style: {flexWrap: 'wrap'}},
-      /*#__PURE__*/React.createElement("select", {
-        value: form.strategie,
-        onChange: e => setForm(f => ({...f, strategie: e.target.value}))
-      }, bots.map(b => /*#__PURE__*/React.createElement("option", {key: b, value: b}, b))),
-      /*#__PURE__*/React.createElement("select", {
-        value: form.epic,
-        style: {minWidth: 120},
-        onChange: e => setForm(f => ({...f, epic: e.target.value}))
-      }, EPICS_FLAT.map(ep => /*#__PURE__*/React.createElement("option", {key: ep, value: ep}, ep))),
-      /*#__PURE__*/React.createElement("select", {
-        value: form.side,
-        onChange: e => setForm(f => ({...f, side: e.target.value}))
-      },
-        /*#__PURE__*/React.createElement("option", {value: 'AUTO'}, "Auto (Signal)"),
-        /*#__PURE__*/React.createElement("option", {value: 'BUY'}, "BUY"),
-        /*#__PURE__*/React.createElement("option", {value: 'SELL'}, "SELL")
-      ),
-      /*#__PURE__*/React.createElement("input", {
-        placeholder: "SL %", value: form.slPct, style: {width: 60},
-        onChange: e => setForm(f => ({...f, slPct: e.target.value}))
-      }),
-      /*#__PURE__*/React.createElement("input", {
-        placeholder: "RRR", value: form.rrr, style: {width: 55},
-        onChange: e => setForm(f => ({...f, rrr: e.target.value}))
-      }),
-      /*#__PURE__*/React.createElement("label", {style: {display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--text-faint)', cursor: 'pointer'}},
-        /*#__PURE__*/React.createElement("input", {
-          type: "checkbox", checked: form.bypass,
-          onChange: e => setForm(f => ({...f, bypass: e.target.checked}))
-        }),
-        "Bypass Filter"
-      ),
-      /*#__PURE__*/React.createElement("button", {
-        className: "tb-btn",
-        style: {background: loading ? 'var(--text-faint)' : '#e06c19', color: '#fff', border: 'none', fontWeight: 600},
-        disabled: loading || !form.strategie,
-        onClick: fire
-      }, loading ? "Feuert…" : "🚀 Fire")
-    ),
-    result && /*#__PURE__*/React.createElement("div", {
-      style: {fontSize: 12, padding: '8px 10px', background: 'var(--surface2)', borderRadius: 6, borderLeft: '3px solid ' + (statusColor || 'var(--text-faint)')}
-    },
-      result.ok
-        ? /*#__PURE__*/React.createElement("div", {style: {display: 'flex', flexDirection: 'column', gap: 4}},
-            /*#__PURE__*/React.createElement("div", null,
-              /*#__PURE__*/React.createElement("b", null, result.epic, " ", result.side), " | Entry ~", result.entry,
-              " | SL: ", result.sl, " | TP: ", result.tp
-            ),
-            /*#__PURE__*/React.createElement("div", {className: "faint"}, result.grund),
-            /*#__PURE__*/React.createElement("div", {style: {marginTop: 2}},
-              /*#__PURE__*/React.createElement("span", null, "Status: "),
-              /*#__PURE__*/React.createElement("b", {style: {color: statusColor}},
-                res.status || JSON.stringify(res).slice(0, 60)
-              ),
-              res.grund && /*#__PURE__*/React.createElement("span", {style: {color: 'var(--text-faint)', marginLeft: 6}},
-                "— ", res.grund
-              )
-            )
-          )
-        : /*#__PURE__*/React.createElement("div", {style: {color: 'var(--neg)'}}, "❌ ", result.error || "Fehler")
-    )
-  );
-}
-
 function ScannerScreen() {
   const [status, setStatus] = useState(null);
   const [form, setForm] = useState({
@@ -3676,7 +3471,7 @@ function ScannerScreen() {
       /*#__PURE__*/React.createElement("option", {value: '__CUSTOM__'}, "Custom…")
     )
   ), form.epicCustom && /*#__PURE__*/React.createElement("input", {
-    placeholder: "Enter epic (e.g. USDJPY)",
+    placeholder: "Enter epic (e.g. EURUSD)",
     value: form.epic,
     style: {minWidth: 130},
     autoFocus: true,
@@ -3717,17 +3512,7 @@ function ScannerScreen() {
       color: '#fff',
       border: 'none'
     }
-  }, "+ Add")), /*#__PURE__*/React.createElement("div", {
-    className: "card",
-    style: {marginTop: 'var(--pad)'}
-  }, /*#__PURE__*/React.createElement("div", {
-    className: "card-head"
-  }, /*#__PURE__*/React.createElement("span", {
-    className: "card-title"
-  }, "🧪 Test Trade"), /*#__PURE__*/React.createElement("span", {
-    className: "faint",
-    style: {fontSize: 11}
-  }, "Feuert ein Signal durch die gesamte Pipeline (Risk · ML · Broker)")), /*#__PURE__*/React.createElement(TestTradePanel, null)), msg && /*#__PURE__*/React.createElement("div", {
+  }, "+ Add")), msg && /*#__PURE__*/React.createElement("div", {
     style: {
       fontSize: 11,
       marginTop: 6,
@@ -4888,7 +4673,12 @@ function App() {
     item: n,
     active: route === n.id,
     onClick: () => setRoute(n.id)
-  }))), /*#__PURE__*/React.createElement("div", {
+  }))), /*#__PURE__*/React.createElement("a", {
+    href: "/helix-markets.html",
+    target: "_blank",
+    className: "sb-item",
+    style: {color:'var(--accent)',textDecoration:'none',marginBottom:'4px',border:'1px solid var(--line)',borderRadius:'var(--radius-sm)'}
+  }, /*#__PURE__*/React.createElement(Icon, {name:"strategy"}), /*#__PURE__*/React.createElement("span", null, "Stock Analyst")), /*#__PURE__*/React.createElement("div", {
     className: "sb-foot"
   }, /*#__PURE__*/React.createElement("div", {
     className: "sb-bot-status"
