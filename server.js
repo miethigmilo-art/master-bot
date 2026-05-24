@@ -2015,16 +2015,23 @@ const T212_BASE = 'https://live.trading212.com/api/v0';
 
 async function t212(endpoint, res) {
   const key = process.env.TRADING212_API_KEY;
-  if (!key) return res.status(503).json({ error: 'TRADING212_API_KEY not configured' });
+  if (!key) {
+    console.error('[T212] TRADING212_API_KEY not set in env');
+    return res.status(503).json({ error: 'TRADING212_API_KEY not configured' });
+  }
+  console.log(`[T212] Fetching ${endpoint} (key: ...${key.slice(-6)})`);
   try {
     const r = await axios.get(`${T212_BASE}${endpoint}`, {
       headers: { Authorization: key },
       timeout: 10000,
     });
+    console.log(`[T212] OK ${endpoint} — status ${r.status}`);
     res.json(r.data);
   } catch (err) {
     const status = err.response?.status || 502;
-    res.status(status).json({ error: err.response?.data || err.message });
+    const body   = err.response?.data || err.message;
+    console.error(`[T212] ERROR ${endpoint} — ${status}:`, JSON.stringify(body));
+    res.status(status).json({ error: body });
   }
 }
 
