@@ -56,7 +56,8 @@ function validateOrder(order, settings) {
     const tpDist = Math.abs(t - e);
     if (slDist > 0) {
       const rrr = parseFloat((tpDist / slDist).toFixed(3));
-      if (rrr < minRRR) {
+      // Tolerance of 0.002 prevents floating-point rejections (e.g. 1.999 vs 2.0)
+      if (rrr < minRRR - 0.002) {
         return { valid: false, reason: `RRR ${rrr} < required minRRR ${minRRR}` };
       }
     }

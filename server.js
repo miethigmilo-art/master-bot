@@ -1286,6 +1286,11 @@ app.post('/pnl', async (req, res) => {
     addTrade(strategie, trade);
     if (equity) addEquity(strategie, equity);
 
+    // ── Portfolio Manager: Exposure freigeben ─────────────────────────────────
+    // CRITICAL: ohne closePosition() akkumuliert openExposureUSD bis 60% → alle Orders geblockt
+    const closedValue = (performance[strategie]?.equity || 1000) * ((SETTINGS[strategie]?.riskPct || 1) / 100);
+    portfolioManager.closePosition(strategie, closedValue, pnlNum);
+
     // ── Memory System: Marktbedingungen bei Gewinn/Verlust ───────────────────
     if (pending) {
       updateMemory(pending.marketModus || marketMode.modus, pending.hour, pending.weekday, pending.side, pnlNum);
@@ -1451,6 +1456,15 @@ app.post('/api/ml-train', async (req, res) => {
 app.get('/api/tuning', (req, res) => res.json(tuningHistory));
 app.get('/api/stunden', (req, res) => res.json(stundenStats));
 app.get('/api/logs', (req, res) => res.json(logs));
+
+app.post('/api/portfolio/reset-exposure', (req, res) => {
+  const token = req.headers['x-dashboard-token'] || req.query.token;
+  if (process.env.DASHBOARD_TOKEN && token !== process.env.DASHBOARD_TOKEN)
+    return res.status(401).json({ error: 'Unauthorized' });
+  portfolioManager.resetAll();
+  addLog('info', '[Portfolio] Exposure manuell zurückgesetzt');
+  res.json({ status: 'ok', message: 'Exposure reset for all strategies' });
+});
 
 app.post('/api/tuning/reset/:name', (req, res) => {
   const { name } = req.params;

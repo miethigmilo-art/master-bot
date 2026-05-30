@@ -269,6 +269,18 @@ class PortfolioManager extends EventEmitter {
   }
 
   /**
+   * Reset all open exposure (emergency — e.g. after restart or manual call)
+   */
+  resetAll() {
+    for (const vp of this._portfolios.values()) {
+      vp.openExposureUSD = 0;
+      vp.paused = false;
+      vp.pausedReason = null;
+    }
+    this.emit('reset', { ts: new Date().toISOString() });
+  }
+
+  /**
    * Total allocated percentage — should sum to ≤ 100
    */
   get totalAllocatedPct() {
