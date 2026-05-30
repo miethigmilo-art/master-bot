@@ -2148,66 +2148,10 @@ async function startServer() {
     autoCloseOrphans: process.env.AUTO_CLOSE_ORPHANS === 'true',
   }).catch(err => addLog('warn', `[Recovery] Startup-Reconciliation Fehler: ${err.message}`));
 
-  server.listen(PORT, () => {
-    addLog('info', `🚀 Master Bot laeuft auf Port ${PORT} (DB: ${db.available ? 'PostgreSQL' : 'JSON'})`);
-    console.log(`Master Bot auf Port ${PORT}`);
+  // ── Phase 11: AutoRetrainer ───────────────────────────────────────────────
+  autoRetrainer.start();
 
-    // ── Security: Recovery Tests at startup ───────────────────────────────
-    runRecoveryTests({
-      killSwitch,
-      deduplicator: secDeduplicator,
-      validateOrder,
-      validateWebhookPayload,
-      portfolioManager,
-      broker,
-    }).then(r => {
-      addLog('RECOVERY_TESTS', `${r.summary} — allPassed: ${r.allPassed}`);
-      if (!r.allPassed) {
-        const failed = r.results.filter(t => !t.passed).map(t => `${t.name}: ${t.error}`).join(' | ');
-        addLog('warn', `⚠️ [Security] Recovery Tests FAILED: ${failed}`);
-      } else {
-        addLog('info', `✅ [Security] All recovery tests passed`);
-      }
-    }).catch(err => addLog('warn', `[Security] Recovery tests error: ${err.message}`));
-  });
-
-  // ── Phase 7: Auto-Retraining Loop ─────────────────────────────────────────
-  const autoRetrainer = new AutoRetrain({
-    featuresPath: FEATURES_PATH,
-    retrainPath:  path.join(DATA_DIR, 'retrains.jsonl'),
-    mlUrl:        ML_URL,
-    addLog,
-    bus,
-    EVENT_TYPES,
-  });
-  _autoRetrainer = autoRetrainer;
-  if (ML_URL) {
-    autoRetrainer.start();
-    addLog('info', '[AutoRetrain] Retraining-Loop aktiv');
-  } else {
-    addLog('info', '[AutoRetrain] Inaktiv (kein ML_SERVICE_URL gesetzt)');
-  }
-
-  // ── Market Mode alle 30 Min aktualisieren (+ sofort nach 5s)
-  setTimeout(analysiereMarktmodus, 5 * 1000);
-  setInterval(analysiereMarktmodus, 30 * 60 * 1000);
-  setInterval(syncPortfolioCapital, 5 * 60 * 1000);
-  setTimeout(syncPortfolioCapital, 5000);
-
-  // ML-Status alle 5 Min aktualisieren
-  setInterval(aktualisiereMlStatus, 5 * 60 * 1000);
-
-  // Meta-Learning: Modell-Drift alle 60 Min pruefen (+ sofort nach 30s)
-  setTimeout(pruefeModelDrift, 30 * 1000);
-  setInterval(pruefeModelDrift, META_CFG.CHECK_INTERVAL * 60 * 1000);
-
-  // Strategie-Score alle 4h pruefen (+ sofort nach 10s)
-  setTimeout(pruefeAlleScores, 10 * 1000);
-  setInterval(pruefeAlleScores, 4 * 60 * 60 * 1000);
-
-  // Multi-Asset Scanner (HELIX Phase 3) — scans multiple instruments simultaneously
-  // Set SIGNAL_SCAN_EPICS=GOLD,EURUSD,US500 to override instrument list
-  // Falls back to SIGNAL_GEN_EPIC (single instrument) for backwards compat
+  // ── Phase 12: Signal Scanner ──────────────────────────────────────────────
   if (process.env.SIGNAL_GEN_ENABLED === 'true') {
     sigGen = new MultiAssetScanner({
       baseUrl:      BASE_URL,
@@ -2219,9 +2163,7 @@ async function startServer() {
       atrSlFactor:  process.env.SIGNAL_GEN_ATR_SL || '1.5',
       intervalMs:   (parseInt(process.env.SIGNAL_GEN_INTERVAL || '60', 10)) * 1000,
       secret:       process.env.WEBHOOK_SECRET    || '',
-      // Pass all strategy IDs so epics are distributed across strategies (1 trade per strategy)
       strategies:   STRATEGY_IDS,
-      // Explicit instrument list (optional — falls back to env SIGNAL_SCAN_EPICS)
       instruments:  null,
     });
     sigGen.start();
@@ -2229,6 +2171,52 @@ async function startServer() {
   } else {
     addLog('info', '[Scanner] Signal Scanner inaktiv (ENV: SIGNAL_GEN_ENABLED=false oder nicht gesetzt)');
   }
+
+  // ── BTC Test Loop — direkt zum Broker, alle Sperren umgangen ────────────
+  if (process.env.BTC_TEST_MODE === 'true') {
+    addLog('info', '[BTC-Test] Loop aktiv — alle 2 Minuten direkt zum Broker');
+    setInterval(async () => {
+      try {
+        addLog('info', '[BTC-Test] Kaufe BTCUSD direkt...');
+        await ensureAuth('stegosaurus');
+        const hdrs = await getCapitalHeaders();
+        // Aktuellen Preis holen
+        const priceResp = await axios.get(BASE_URL + '/prices/BTCUSD', {
+          headers: hdrs,
+          params: { resolution: 'MINUTE', max: 2 },
+          timeout: 10000,
+        });
+        const candles = priceResp.data?.prices || [];
+        const last = candles[candles.length - 1];
+        const entry = parseFloat((last?.closePrice?.bid || last?.close || 70000).toFixed(2));
+        const sl = parseFloat((entry * 0.98).toFixed(2));   // 2% SL
+        const tp = parseFloat((entry * 1.042).toFixed(2));  // 4.2% TP → RRR 2.1
+
+        const order = {
+          symbol:      'BTCUSD',
+          assetClass:  'commodity',
+          side:        'BUY',
+          size:        1,
+          orderType:   'MKT',
+          stopLevel:   sl,
+          profitLevel: tp,
+          strategyId:  'stegosaurus',
+          correlationId: `btc-test-${Date.now()}`,
+        };
+
+        addLog('info', `[BTC-Test] Order: entry=${entry} SL=${sl} TP=${tp}`);
+        const result = await placeOrder('stegosaurus', order);
+        addLog('info', `[BTC-Test] ✅ Broker Antwort: ${JSON.stringify(result)}`);
+      } catch (err) {
+        addLog('error', `[BTC-Test] ❌ Fehler: ${err.response?.data ? JSON.stringify(err.response.data) : err.message}`);
+      }
+    }, 2 * 60 * 1000);
+  }
+
+  // ── HTTP Server starten ───────────────────────────────────────────────────
+  app.listen(PORT, () => {
+    addLog('info', `🚀 Master Bot laeuft auf Port ${PORT} (DB: ${db.available ? 'PostgreSQL' : 'JSON'})`);
+  });
 }
 
 startServer().catch(err => {
