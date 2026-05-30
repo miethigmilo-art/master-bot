@@ -2149,6 +2149,13 @@ async function startServer() {
   }).catch(err => addLog('warn', `[Recovery] Startup-Reconciliation Fehler: ${err.message}`));
 
   // ── Phase 11: AutoRetrainer ───────────────────────────────────────────────
+  const autoRetrainer = new AutoRetrain({
+    featuresPath: FEATURES_PATH,
+    mlUrl:        ML_URL || '',
+    addLog,
+    bus,
+    EVENT_TYPES,
+  });
   autoRetrainer.start();
 
   // ── Phase 12: Signal Scanner ──────────────────────────────────────────────
