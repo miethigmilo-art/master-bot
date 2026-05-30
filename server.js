@@ -2179,47 +2179,6 @@ async function startServer() {
     addLog('info', '[Scanner] Signal Scanner inaktiv (ENV: SIGNAL_GEN_ENABLED=false oder nicht gesetzt)');
   }
 
-  // ── BTC Test Loop — direkt zum Broker, alle Sperren umgangen ────────────
-  if (process.env.BTC_TEST_MODE === 'true') {
-    addLog('info', '[BTC-Test] Loop aktiv — alle 2 Minuten direkt zum Broker');
-    setInterval(async () => {
-      try {
-        addLog('info', '[BTC-Test] Kaufe BTCUSD direkt...');
-        await ensureAuth('stegosaurus');
-        const hdrs = await getCapitalHeaders();
-        // Aktuellen Preis holen
-        const priceResp = await axios.get(BASE_URL + '/prices/BTCUSD', {
-          headers: hdrs,
-          params: { resolution: 'MINUTE', max: 2 },
-          timeout: 10000,
-        });
-        const candles = priceResp.data?.prices || [];
-        const last = candles[candles.length - 1];
-        const entry = parseFloat((last?.closePrice?.bid || last?.close || 70000).toFixed(2));
-        const sl = parseFloat((entry * 0.98).toFixed(2));   // 2% SL
-        const tp = parseFloat((entry * 1.042).toFixed(2));  // 4.2% TP → RRR 2.1
-
-        const order = {
-          symbol:      'BTCUSD',
-          assetClass:  'commodity',
-          side:        'BUY',
-          size:        1,
-          orderType:   'MKT',
-          stopLevel:   sl,
-          profitLevel: tp,
-          strategyId:  'stegosaurus',
-          correlationId: `btc-test-${Date.now()}`,
-        };
-
-        addLog('info', `[BTC-Test] Order: entry=${entry} SL=${sl} TP=${tp}`);
-        const result = await placeOrder('stegosaurus', order);
-        addLog('info', `[BTC-Test] ✅ Broker Antwort: ${JSON.stringify(result)}`);
-      } catch (err) {
-        addLog('error', `[BTC-Test] ❌ Fehler: ${err.response?.data ? JSON.stringify(err.response.data) : err.message}`);
-      }
-    }, 2 * 60 * 1000);
-  }
-
   // ── HTTP Server starten ───────────────────────────────────────────────────
   app.listen(PORT, () => {
     addLog('info', `🚀 Master Bot laeuft auf Port ${PORT} (DB: ${db.available ? 'PostgreSQL' : 'JSON'})`);
